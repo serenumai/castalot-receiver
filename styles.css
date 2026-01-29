@@ -75,7 +75,7 @@ cast-media-player {
   display: grid;
   place-items: center;
   gap: 12px;
-  transform: translateY(-72px);
+  transform: translateY(-120px);
 }
 
 .splash-card img {
