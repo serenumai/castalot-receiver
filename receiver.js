@@ -6,7 +6,6 @@
   const watermarkEl = document.getElementById('watermark');
   const watermarkTextEl = watermarkEl ? watermarkEl.querySelector('span') : null;
   const splashEl = document.getElementById('splash');
-  let splashShownThisSession = false;
 
   function showSplash() {
     if (!splashEl) return;
@@ -42,12 +41,6 @@
     cast.framework.messages.MessageType.LOAD,
     (loadRequestData) => {
       applyWatermarkFromCustomData(loadRequestData && loadRequestData.customData);
-      if (!splashShownThisSession) {
-        showSplash();
-        if (loadRequestData) {
-          loadRequestData.autoplay = false;
-        }
-      }
       return loadRequestData;
     }
   );
@@ -59,13 +52,25 @@
       if (data && data.customData) {
         applyWatermarkFromCustomData(data.customData);
       }
-      if (!splashShownThisSession) {
-        splashShownThisSession = true;
-        window.setTimeout(() => {
-          hideSplash();
-          playerManager.play();
-        }, 1000);
+    }
+  );
+
+  playerManager.addEventListener(
+    cast.framework.events.EventType.PLAYER_STATE_CHANGED,
+    () => {
+      const state = playerManager.getPlayerState();
+      if (state === cast.framework.messages.PlayerState.IDLE) {
+        showSplash();
+      } else {
+        hideSplash();
       }
+    }
+  );
+
+  context.addEventListener(
+    cast.framework.system.EventType.READY,
+    () => {
+      showSplash();
     }
   );
 
