@@ -11,6 +11,7 @@
     if (!splashEl) return;
     splashEl.classList.remove('hidden');
     splashEl.classList.add('visible');
+    setWatermarkVisible(false);
   }
 
   function hideSplash() {
@@ -41,6 +42,7 @@
     cast.framework.messages.MessageType.LOAD,
     (loadRequestData) => {
       applyWatermarkFromCustomData(loadRequestData && loadRequestData.customData);
+      hideSplash();
       return loadRequestData;
     }
   );
@@ -52,6 +54,7 @@
       if (data && data.customData) {
         applyWatermarkFromCustomData(data.customData);
       }
+      hideSplash();
     }
   );
 
