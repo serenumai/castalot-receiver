@@ -7,6 +7,7 @@
   const watermarkTextEl = watermarkEl ? watermarkEl.querySelector('span') : null;
   const splashEl = document.getElementById('splash');
   let splashVisible = false;
+  let watermarkEnabledState = false;
 
   function showSplash() {
     if (!splashEl) return;
@@ -21,6 +22,7 @@
     splashEl.classList.remove('visible');
     window.setTimeout(() => splashEl.classList.add('hidden'), 220);
     splashVisible = false;
+    setWatermarkVisible(watermarkEnabledState);
   }
 
   function setWatermarkVisible(visible) {
@@ -39,6 +41,7 @@
     if (watermarkTextEl) {
       watermarkTextEl.textContent = text;
     }
+    watermarkEnabledState = enabled;
     setWatermarkVisible(enabled);
   }
 
