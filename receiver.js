@@ -6,11 +6,13 @@
   const watermarkEl = document.getElementById('watermark');
   const watermarkTextEl = watermarkEl ? watermarkEl.querySelector('span') : null;
   const splashEl = document.getElementById('splash');
+  let splashVisible = false;
 
   function showSplash() {
     if (!splashEl) return;
     splashEl.classList.remove('hidden');
     splashEl.classList.add('visible');
+    splashVisible = true;
     setWatermarkVisible(false);
   }
 
@@ -18,11 +20,13 @@
     if (!splashEl) return;
     splashEl.classList.remove('visible');
     window.setTimeout(() => splashEl.classList.add('hidden'), 220);
+    splashVisible = false;
   }
 
   function setWatermarkVisible(visible) {
     if (!watermarkEl) return;
-    watermarkEl.classList.toggle('hidden', !visible);
+    const shouldShow = visible && !splashVisible;
+    watermarkEl.classList.toggle('hidden', !shouldShow);
   }
 
   function applyWatermarkFromCustomData(customData) {
