@@ -55,24 +55,35 @@
     }
   );
 
-  playerManager.addEventListener(
-    cast.framework.events.EventType.PLAYER_STATE_CHANGED,
-    () => {
-      const state = playerManager.getPlayerState();
-      if (state === cast.framework.messages.PlayerState.IDLE) {
-        showSplash();
-      } else {
-        hideSplash();
+  const playerStateEvent =
+    (cast.framework.events && cast.framework.events.EventType && cast.framework.events.EventType.PLAYER_STATE_CHANGED) ||
+    null;
+  if (playerStateEvent) {
+    playerManager.addEventListener(
+      playerStateEvent,
+      () => {
+        const state = playerManager.getPlayerState();
+        if (state === cast.framework.messages.PlayerState.IDLE) {
+          showSplash();
+        } else {
+          hideSplash();
+        }
       }
-    }
-  );
+    );
+  }
 
-  context.addEventListener(
-    cast.framework.system.EventType.READY,
-    () => {
-      showSplash();
-    }
-  );
+  const readyEvent =
+    (cast.framework.system && cast.framework.system.EventType && cast.framework.system.EventType.READY) ||
+    (cast.framework.CastReceiverContextEventType && cast.framework.CastReceiverContextEventType.READY) ||
+    null;
+  if (readyEvent) {
+    context.addEventListener(
+      readyEvent,
+      () => {
+        showSplash();
+      }
+    );
+  }
 
   context.start({
     disableIdleTimeout: true
