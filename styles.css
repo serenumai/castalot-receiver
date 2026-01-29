@@ -41,3 +41,39 @@ cast-media-player {
 .watermark.hidden {
   opacity: 0;
 }
+
+.splash {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: 20;
+  opacity: 0;
+  transition: opacity 200ms ease;
+  pointer-events: none;
+}
+
+.splash-card {
+  display: grid;
+  place-items: center;
+  gap: 12px;
+}
+
+.splash-card img {
+  width: 86px;
+  height: 86px;
+  object-fit: contain;
+  filter: drop-shadow(0 10px 26px rgba(0, 0, 0, 0.6));
+}
+
+.splash-title {
+  font: 700 26px/1 \"Space Grotesk\", system-ui, -apple-system, Segoe UI, sans-serif;
+  letter-spacing: 1px;
+  color: rgba(255, 255, 255, 0.9);
+  text-transform: none;
+}
+
+.splash.visible {
+  opacity: 1;
+}
