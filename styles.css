@@ -14,6 +14,23 @@ cast-media-player {
   height: 100vh;
 }
 
+.slideshow {
+  position: absolute;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  object-fit: contain;
+  background: #000;
+  z-index: 5;
+  opacity: 1;
+  transition: opacity 200ms ease;
+}
+
+.slideshow.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .watermark {
   position: absolute;
   right: 32px;
@@ -58,7 +75,7 @@ cast-media-player {
   display: grid;
   place-items: center;
   gap: 12px;
-  transform: translateY(-36px);
+  transform: translateY(-72px);
 }
 
 .splash-card img {
