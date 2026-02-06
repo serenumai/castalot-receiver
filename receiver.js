@@ -116,25 +116,75 @@
     sendSlideshowStatus();
   });
 
+  let pendingRotation = 0;
+
   function applyVideoRotation(degrees) {
     const player = document.getElementById('player');
     if (!player) return;
     const deg = Number(degrees) || 0;
+    pendingRotation = deg;
     if (deg === 0) {
-      player.style.transform = '';
+      player.style.cssText = player.style.cssText.replace(/transform:[^;]+;?/g, '');
+      clearVideoRotation(player);
       return;
     }
-    // For 90/270 rotation, scale down so the rotated video fits the viewport
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
     const needsScale = (deg === 90 || deg === 270);
-    if (needsScale) {
-      const vw = window.innerWidth;
-      const vh = window.innerHeight;
-      const scale = Math.min(vw, vh) / Math.max(vw, vh);
-      player.style.transform = 'rotate(' + deg + 'deg) scale(' + scale + ')';
-    } else {
-      player.style.transform = 'rotate(' + deg + 'deg)';
+    const scale = needsScale ? (Math.min(vw, vh) / Math.max(vw, vh)) : 1;
+    const transformValue = 'rotate(' + deg + 'deg) scale(' + scale + ')';
+
+    // Apply to the cast-media-player host element
+    player.style.setProperty('transform', transformValue, 'important');
+    player.style.setProperty('transform-origin', 'center center', 'important');
+
+    // Also try to reach the video element inside shadow DOM
+    applyToShadowVideo(player, transformValue);
+
+    console.log('[Castalot] applied video rotation: ' + deg + 'deg, scale: ' + scale);
+  }
+
+  function applyToShadowVideo(player, transformValue) {
+    try {
+      var root = player.shadowRoot;
+      if (!root) {
+        console.log('[Castalot] no shadowRoot on player');
+        return;
+      }
+      var video = root.querySelector('video');
+      if (video) {
+        video.style.setProperty('transform', transformValue, 'important');
+        video.style.setProperty('transform-origin', 'center center', 'important');
+        console.log('[Castalot] applied rotation to shadow DOM video');
+      } else {
+        console.log('[Castalot] no video in shadowRoot, will retry');
+        // Video might not be created yet - observe for it
+        var observer = new MutationObserver(function() {
+          var v = root.querySelector('video');
+          if (v) {
+            v.style.setProperty('transform', transformValue, 'important');
+            v.style.setProperty('transform-origin', 'center center', 'important');
+            console.log('[Castalot] applied rotation to shadow DOM video (deferred)');
+            observer.disconnect();
+          }
+        });
+        observer.observe(root, { childList: true, subtree: true });
+      }
+    } catch (err) {
+      console.warn('[Castalot] shadow DOM rotation failed', err);
     }
-    console.log('[Castalot] applied video rotation: ' + deg + 'deg');
+  }
+
+  function clearVideoRotation(player) {
+    try {
+      var root = player.shadowRoot;
+      if (!root) return;
+      var video = root.querySelector('video');
+      if (video) {
+        video.style.removeProperty('transform');
+        video.style.removeProperty('transform-origin');
+      }
+    } catch (err) { /* ignore */ }
   }
 
   function applyWatermarkFromCustomData(customData) {
@@ -176,6 +226,11 @@
       const data = playerManager.getMediaInformation();
       if (data && data.customData) {
         applyWatermarkFromCustomData(data.customData);
+      }
+      // Re-apply rotation after player finishes loading (SDK may reset styles)
+      if (pendingRotation !== 0) {
+        console.log('[Castalot] re-applying rotation after PLAYER_LOAD_COMPLETE');
+        applyVideoRotation(pendingRotation);
       }
       if (slideshowActive) {
         hideSplash();
