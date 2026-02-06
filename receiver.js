@@ -7,6 +7,7 @@
   const watermarkTextEl = watermarkEl ? watermarkEl.querySelector('span') : null;
   const splashEl = document.getElementById('splash');
   const slideshowEl = document.getElementById('slideshow');
+  const slideshowNamespace = 'urn:x-cast:ai.serenum.castalot.slideshow';
   let splashVisible = false;
   let watermarkEnabledState = false;
   let slideshowActive = false;
@@ -15,6 +16,12 @@
   let slideshowIndex = 0;
   let slideshowIntervalMs = 5000;
 
+  function setPlayerVisible(visible) {
+    const player = document.getElementById('player');
+    if (!player) return;
+    player.style.display = visible ? '' : 'none';
+  }
+
   function showSplash() {
     if (slideshowActive) return;
     if (!splashEl) return;
@@ -22,6 +29,7 @@
     splashEl.classList.add('visible');
     splashVisible = true;
     setWatermarkVisible(false);
+    setPlayerVisible(false);
   }
 
   function hideSplash() {
@@ -30,6 +38,9 @@
     window.setTimeout(() => splashEl.classList.add('hidden'), 220);
     splashVisible = false;
     setWatermarkVisible(watermarkEnabledState);
+    if (!slideshowActive) {
+      setPlayerVisible(true);
+    }
   }
 
   function setWatermarkVisible(visible) {
@@ -57,8 +68,7 @@
     slideshowUrls = [];
     slideshowIndex = 0;
     hideSlideshow();
-    const player = document.getElementById('player');
-    if (player) player.style.display = '';
+    setPlayerVisible(true);
   }
 
   function startSlideshow(urls, intervalSeconds) {
@@ -69,16 +79,62 @@
     slideshowIndex = 0;
     slideshowIntervalMs = Math.max(1, Number(intervalSeconds || 5)) * 1000;
     console.log('[Castalot] slideshow start', { count: slideshowUrls.length, intervalMs: slideshowIntervalMs });
-    const player = document.getElementById('player');
-    if (player) player.style.display = 'none';
+    setPlayerVisible(false);
     showSlideshow();
     hideSplash();
     slideshowEl.src = slideshowUrls[slideshowIndex];
+    sendSlideshowStatus();
     slideshowTimer = setInterval(() => {
       slideshowIndex = (slideshowIndex + 1) % slideshowUrls.length;
       console.log('[Castalot] slideshow next', { index: slideshowIndex, url: slideshowUrls[slideshowIndex] });
       slideshowEl.src = slideshowUrls[slideshowIndex];
+      sendSlideshowStatus();
     }, slideshowIntervalMs);
+  }
+
+  function sendSlideshowStatus() {
+    if (!slideshowActive) return;
+    const senders = context.getSenders();
+    if (!senders || senders.length === 0) return;
+    const payload = {
+      type: 'slideshowStatus',
+      index: slideshowIndex,
+      total: slideshowUrls.length
+    };
+    senders.forEach((sender) => {
+      try {
+        context.sendCustomMessage(slideshowNamespace, sender.senderId, payload);
+      } catch (err) {
+        console.warn('[Castalot] slideshow status send failed', err);
+      }
+    });
+  }
+
+  context.addCustomMessageListener(slideshowNamespace, (event) => {
+    const data = event && event.data;
+    if (!data || data.type !== 'slideshowStatusRequest') return;
+    sendSlideshowStatus();
+  });
+
+  function applyVideoRotation(degrees) {
+    const player = document.getElementById('player');
+    if (!player) return;
+    const deg = Number(degrees) || 0;
+    if (deg === 0) {
+      player.style.transform = '';
+      return;
+    }
+    // For 90/270 rotation, scale down so the rotated video fits the viewport
+    const needsScale = (deg === 90 || deg === 270);
+    if (needsScale) {
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const scale = Math.min(vw, vh) / Math.max(vw, vh);
+      player.style.transform = 'rotate(' + deg + 'deg) scale(' + scale + ')';
+    } else {
+      player.style.transform = 'rotate(' + deg + 'deg)';
+    }
+    console.log('[Castalot] applied video rotation: ' + deg + 'deg');
   }
 
   function applyWatermarkFromCustomData(customData) {
@@ -98,8 +154,10 @@
   playerManager.setMessageInterceptor(
     cast.framework.messages.MessageType.LOAD,
     (loadRequestData) => {
-      applyWatermarkFromCustomData(loadRequestData && loadRequestData.customData);
-      const slideshowData = loadRequestData && loadRequestData.customData && loadRequestData.customData.slideshow;
+      const customData = loadRequestData && loadRequestData.customData;
+      applyWatermarkFromCustomData(customData);
+      applyVideoRotation(customData && customData.videoRotation);
+      const slideshowData = customData && customData.slideshow;
       if (slideshowData && Array.isArray(slideshowData.urls)) {
         console.log('[Castalot] slideshow customData', slideshowData);
         startSlideshow(slideshowData.urls, slideshowData.interval);
