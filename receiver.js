@@ -117,71 +117,97 @@
   });
 
   let pendingRotation = 0;
+  let rotationCanvasActive = false;
+  let rotationAnimFrame = null;
 
   function applyVideoRotation(degrees) {
     const player = document.getElementById('player');
     if (!player) return;
     const deg = Number(degrees) || 0;
     pendingRotation = deg;
-    if (deg === 0) {
-      clearVideoRotation(player);
+    stopRotationCanvas();
+    if (deg === 0) return;
+
+    // Use canvas rendering — CSS transforms don't rotate the hardware video surface
+    var root = player.shadowRoot;
+    if (!root) {
+      console.log('[Castalot] no shadowRoot');
       return;
     }
-    var needsSwap = (deg === 90 || deg === 270);
-    applyShadowVideoRotation(player, deg, needsSwap);
-    console.log('[Castalot] applied video rotation: ' + deg + 'deg, swap=' + needsSwap);
-  }
-
-  function applyShadowVideoRotation(player, deg, swapDimensions) {
-    try {
-      var root = player.shadowRoot;
-      if (!root) {
-        console.log('[Castalot] no shadowRoot on player');
-        return;
-      }
-      var video = root.querySelector('video');
-      if (video) {
-        setVideoRotationStyles(video, deg, swapDimensions);
-      } else {
-        console.log('[Castalot] no video in shadowRoot, will retry');
-        var observer = new MutationObserver(function() {
-          var v = root.querySelector('video');
-          if (v) {
-            setVideoRotationStyles(v, deg, swapDimensions);
-            observer.disconnect();
-          }
-        });
-        observer.observe(root, { childList: true, subtree: true });
-      }
-    } catch (err) {
-      console.warn('[Castalot] shadow DOM rotation failed', err);
+    var video = root.querySelector('video');
+    if (video) {
+      startRotationCanvas(video, deg);
+    } else {
+      var observer = new MutationObserver(function() {
+        var v = root.querySelector('video');
+        if (v) {
+          startRotationCanvas(v, deg);
+          observer.disconnect();
+        }
+      });
+      observer.observe(root, { childList: true, subtree: true });
     }
   }
 
-  function setVideoRotationStyles(video, deg, swapDimensions) {
-    // Pure rotation only — no scale, no dimension changes.
-    // Let the video render at its natural size, then rotate the visual output.
-    video.style.setProperty('transform', 'rotate(' + deg + 'deg)', 'important');
-    video.style.setProperty('transform-origin', 'center center', 'important');
-    console.log('[Castalot] rotation styles applied to video element (pure rotate, no scale)');
+  function startRotationCanvas(video, deg) {
+    stopRotationCanvas();
+    var canvas = document.createElement('canvas');
+    canvas.id = 'rotation-canvas';
+    var vw = window.innerWidth;
+    var vh = window.innerHeight;
+    canvas.width = vw;
+    canvas.height = vh;
+    canvas.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:4;background:#000;';
+    document.body.appendChild(canvas);
+
+    // Hide the hardware video surface
+    video.style.setProperty('opacity', '0', 'important');
+
+    var ctx = canvas.getContext('2d');
+    var rad = deg * Math.PI / 180;
+    rotationCanvasActive = true;
+
+    function draw() {
+      if (!rotationCanvasActive) return;
+      if (video.readyState >= 2 && video.videoWidth > 0) {
+        var videoW = video.videoWidth;
+        var videoH = video.videoHeight;
+        // After rotation, effective dimensions swap for 90/270
+        var is90or270 = (deg === 90 || deg === 270);
+        var rotW = is90or270 ? videoH : videoW;
+        var rotH = is90or270 ? videoW : videoH;
+        // Scale to fit viewport
+        var scale = Math.min(vw / rotW, vh / rotH);
+        var drawW = videoW * scale;
+        var drawH = videoH * scale;
+
+        ctx.clearRect(0, 0, vw, vh);
+        ctx.save();
+        ctx.translate(vw / 2, vh / 2);
+        ctx.rotate(rad);
+        ctx.drawImage(video, -drawW / 2, -drawH / 2, drawW, drawH);
+        ctx.restore();
+      }
+      rotationAnimFrame = requestAnimationFrame(draw);
+    }
+    rotationAnimFrame = requestAnimationFrame(draw);
+    console.log('[Castalot] rotation canvas started: ' + deg + 'deg, viewport=' + vw + 'x' + vh);
   }
 
-  function clearVideoRotation(player) {
-    try {
-      var root = player.shadowRoot;
-      if (!root) return;
-      var video = root.querySelector('video');
-      if (video) {
-        video.style.removeProperty('position');
-        video.style.removeProperty('top');
-        video.style.removeProperty('left');
-        video.style.removeProperty('width');
-        video.style.removeProperty('height');
-        video.style.removeProperty('object-fit');
-        video.style.removeProperty('transform');
-        video.style.removeProperty('transform-origin');
-      }
-    } catch (err) { /* ignore */ }
+  function stopRotationCanvas() {
+    rotationCanvasActive = false;
+    if (rotationAnimFrame) {
+      cancelAnimationFrame(rotationAnimFrame);
+      rotationAnimFrame = null;
+    }
+    var existing = document.getElementById('rotation-canvas');
+    if (existing) existing.remove();
+    // Restore video visibility
+    var player = document.getElementById('player');
+    if (player && player.shadowRoot) {
+      var video = player.shadowRoot.querySelector('video');
+      if (video) video.style.removeProperty('opacity');
+    }
   }
 
   function applyWatermarkFromCustomData(customData) {
