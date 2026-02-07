@@ -64,7 +64,7 @@ cast-media-player {
   inset: 0;
   display: grid;
   place-items: center;
-  background: rgba(0, 0, 0, 0.35);
+  background: rgba(255, 0, 0, 0.5);
   z-index: 20;
   opacity: 0;
   transition: opacity 200ms ease;
