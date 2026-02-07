@@ -124,26 +124,15 @@
     const deg = Number(degrees) || 0;
     pendingRotation = deg;
     if (deg === 0) {
-      player.style.removeProperty('transform');
-      player.style.removeProperty('transform-origin');
       clearVideoRotation(player);
       return;
     }
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const needsScale = (deg === 90 || deg === 270);
-    const scale = needsScale ? (Math.min(vw, vh) / Math.max(vw, vh)) : 1;
-    const transformValue = 'rotate(' + deg + 'deg) scale(' + scale + ')';
-
-    // Apply rotation to the outer cast-media-player element only.
-    // The video renders correctly at full size inside, then the whole element rotates.
-    player.style.setProperty('transform', transformValue, 'important');
-    player.style.setProperty('transform-origin', 'center center', 'important');
-
-    console.log('[Castalot] applied video rotation: ' + deg + 'deg, scale: ' + scale);
+    var needsSwap = (deg === 90 || deg === 270);
+    applyShadowVideoRotation(player, deg, needsSwap);
+    console.log('[Castalot] applied video rotation: ' + deg + 'deg, swap=' + needsSwap);
   }
 
-  function applyToShadowVideo(player, transformValue) {
+  function applyShadowVideoRotation(player, deg, swapDimensions) {
     try {
       var root = player.shadowRoot;
       if (!root) {
@@ -152,18 +141,13 @@
       }
       var video = root.querySelector('video');
       if (video) {
-        video.style.setProperty('transform', transformValue, 'important');
-        video.style.setProperty('transform-origin', 'center center', 'important');
-        console.log('[Castalot] applied rotation to shadow DOM video');
+        setVideoRotationStyles(video, deg, swapDimensions);
       } else {
         console.log('[Castalot] no video in shadowRoot, will retry');
-        // Video might not be created yet - observe for it
         var observer = new MutationObserver(function() {
           var v = root.querySelector('video');
           if (v) {
-            v.style.setProperty('transform', transformValue, 'important');
-            v.style.setProperty('transform-origin', 'center center', 'important');
-            console.log('[Castalot] applied rotation to shadow DOM video (deferred)');
+            setVideoRotationStyles(v, deg, swapDimensions);
             observer.disconnect();
           }
         });
@@ -174,12 +158,37 @@
     }
   }
 
+  function setVideoRotationStyles(video, deg, swapDimensions) {
+    if (swapDimensions) {
+      // Swap width/height so after 90° rotation the element fits the viewport exactly.
+      // No scale needed — the rotated swapped-dimension element matches viewport size.
+      video.style.setProperty('position', 'fixed', 'important');
+      video.style.setProperty('top', '50%', 'important');
+      video.style.setProperty('left', '50%', 'important');
+      video.style.setProperty('width', '100vh', 'important');
+      video.style.setProperty('height', '100vw', 'important');
+      video.style.setProperty('object-fit', 'contain', 'important');
+      video.style.setProperty('transform', 'translate(-50%, -50%) rotate(' + deg + 'deg)', 'important');
+      video.style.setProperty('transform-origin', 'center center', 'important');
+    } else {
+      video.style.setProperty('transform', 'rotate(' + deg + 'deg)', 'important');
+      video.style.setProperty('transform-origin', 'center center', 'important');
+    }
+    console.log('[Castalot] rotation styles applied to video element');
+  }
+
   function clearVideoRotation(player) {
     try {
       var root = player.shadowRoot;
       if (!root) return;
       var video = root.querySelector('video');
       if (video) {
+        video.style.removeProperty('position');
+        video.style.removeProperty('top');
+        video.style.removeProperty('left');
+        video.style.removeProperty('width');
+        video.style.removeProperty('height');
+        video.style.removeProperty('object-fit');
         video.style.removeProperty('transform');
         video.style.removeProperty('transform-origin');
       }
