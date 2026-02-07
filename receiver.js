@@ -124,7 +124,6 @@
     const deg = Number(degrees) || 0;
     pendingRotation = deg;
     if (deg === 0) {
-      player.style.cssText = player.style.cssText.replace(/transform:[^;]+;?/g, '');
       clearVideoRotation(player);
       return;
     }
@@ -134,11 +133,8 @@
     const scale = needsScale ? (Math.min(vw, vh) / Math.max(vw, vh)) : 1;
     const transformValue = 'rotate(' + deg + 'deg) scale(' + scale + ')';
 
-    // Apply to the cast-media-player host element
-    player.style.setProperty('transform', transformValue, 'important');
-    player.style.setProperty('transform-origin', 'center center', 'important');
-
-    // Also try to reach the video element inside shadow DOM
+    // Apply rotation only to the <video> inside the shadow DOM
+    // (rotating the outer cast-media-player squishes the video into a portrait sliver)
     applyToShadowVideo(player, transformValue);
 
     console.log('[Castalot] applied video rotation: ' + deg + 'deg, scale: ' + scale);
