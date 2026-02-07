@@ -159,22 +159,11 @@
   }
 
   function setVideoRotationStyles(video, deg, swapDimensions) {
-    if (swapDimensions) {
-      // Swap width/height so after 90° rotation the element fits the viewport exactly.
-      // No scale needed — the rotated swapped-dimension element matches viewport size.
-      video.style.setProperty('position', 'fixed', 'important');
-      video.style.setProperty('top', '50%', 'important');
-      video.style.setProperty('left', '50%', 'important');
-      video.style.setProperty('width', '100vh', 'important');
-      video.style.setProperty('height', '100vw', 'important');
-      video.style.setProperty('object-fit', 'contain', 'important');
-      video.style.setProperty('transform', 'translate(-50%, -50%) rotate(' + deg + 'deg)', 'important');
-      video.style.setProperty('transform-origin', 'center center', 'important');
-    } else {
-      video.style.setProperty('transform', 'rotate(' + deg + 'deg)', 'important');
-      video.style.setProperty('transform-origin', 'center center', 'important');
-    }
-    console.log('[Castalot] rotation styles applied to video element');
+    // Pure rotation only — no scale, no dimension changes.
+    // Let the video render at its natural size, then rotate the visual output.
+    video.style.setProperty('transform', 'rotate(' + deg + 'deg)', 'important');
+    video.style.setProperty('transform-origin', 'center center', 'important');
+    console.log('[Castalot] rotation styles applied to video element (pure rotate, no scale)');
   }
 
   function clearVideoRotation(player) {
