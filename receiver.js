@@ -139,19 +139,27 @@
       return;
     }
 
+    // Force software compositing by applying a CSS filter.
+    // On Android TV / NVIDIA Shield, video normally renders on a hardware
+    // overlay (SurfaceView) that ignores CSS transforms. A CSS filter forces
+    // the browser to composite the video through the GPU texture path instead,
+    // which makes CSS transforms (including rotation) actually affect the
+    // video content, not just the bounding box.
+    video.style.setProperty('filter', 'brightness(1)', 'important');
+    player.style.setProperty('filter', 'brightness(1)', 'important');
+
     var vw = window.innerWidth;
     var vh = window.innerHeight;
-    var aspect = vw / vh;
 
     if (deg === 90 || deg === 270) {
-      // Rotate + counteract the aspect ratio distortion.
-      // After rotate(90deg), the bounding box swaps from W×H to H×W.
-      // The video surface stretches to fill this, distorting by aspect ratio.
-      // Counter-scale: scaleX(W/H) scaleY(H/W) undoes the stretch.
-      var transformValue = 'rotate(' + deg + 'deg) scale(' + aspect + ', ' + (1 / aspect) + ')';
+      // After rotate(90deg), the 100vw×100vh element has visual bounds of
+      // 100vh×100vw. To fit within the screen, scale uniformly by vh/vw.
+      // Result: portrait video centered on landscape screen with black bars.
+      var scaleFactor = vh / vw;
+      var transformValue = 'rotate(' + deg + 'deg) scale(' + scaleFactor + ')';
       video.style.setProperty('transform', transformValue, 'important');
       video.style.setProperty('transform-origin', 'center center', 'important');
-      console.log('[Castalot] rotation applied: ' + transformValue);
+      console.log('[Castalot] rotation applied (filter+scale): ' + transformValue + ' scaleFactor=' + scaleFactor);
     } else {
       video.style.setProperty('transform', 'rotate(' + deg + 'deg)', 'important');
       video.style.setProperty('transform-origin', 'center center', 'important');
