@@ -189,7 +189,7 @@
       return;
     }
     const enabled = Boolean(customData.watermarkEnabled);
-    const text = typeof customData.watermarkText === 'string' ? customData.watermarkText : 'castalot.app';
+    const text = typeof customData.watermarkText === 'string' ? customData.watermarkText : 'castalot.app2';
     if (watermarkTextEl) {
       watermarkTextEl.textContent = text;
     }
