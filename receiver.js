@@ -128,43 +128,10 @@
   function applyPendingRotation() {
     var deg = pendingRotation;
     if (deg === 0) return;
-    var player = document.getElementById('player');
-    if (!player || !player.shadowRoot) {
-      console.log('[Castalot] no shadowRoot, cannot apply rotation');
-      return;
-    }
-    var video = player.shadowRoot.querySelector('video');
-    if (!video) {
-      console.log('[Castalot] no video element in shadow DOM');
-      return;
-    }
-
-    // Force software compositing by applying a CSS filter.
-    // On Android TV / NVIDIA Shield, video normally renders on a hardware
-    // overlay (SurfaceView) that ignores CSS transforms. A CSS filter forces
-    // the browser to composite the video through the GPU texture path instead,
-    // which makes CSS transforms (including rotation) actually affect the
-    // video content, not just the bounding box.
-    video.style.setProperty('filter', 'brightness(1)', 'important');
-    player.style.setProperty('filter', 'brightness(1)', 'important');
-
-    var vw = window.innerWidth;
-    var vh = window.innerHeight;
-
-    if (deg === 90 || deg === 270) {
-      // After rotate(90deg), the 100vw×100vh element has visual bounds of
-      // 100vh×100vw. To fit within the screen, scale uniformly by vh/vw.
-      // Result: portrait video centered on landscape screen with black bars.
-      var scaleFactor = vh / vw;
-      var transformValue = 'rotate(' + deg + 'deg) scale(' + scaleFactor + ')';
-      video.style.setProperty('transform', transformValue, 'important');
-      video.style.setProperty('transform-origin', 'center center', 'important');
-      console.log('[Castalot] rotation applied (filter+scale): ' + transformValue + ' scaleFactor=' + scaleFactor);
-    } else {
-      video.style.setProperty('transform', 'rotate(' + deg + 'deg)', 'important');
-      video.style.setProperty('transform-origin', 'center center', 'important');
-      console.log('[Castalot] rotation applied: rotate(' + deg + 'deg)');
-    }
+    // CSS transforms cannot rotate video on Android TV hardware overlay.
+    // filter:brightness(1) forces software compositing but makes video invisible.
+    // Rotation is handled by the sender (iOS) during remux/transcode instead.
+    console.log('[Castalot] rotation ' + deg + 'deg — handled by sender, no CSS rotation applied');
   }
 
   function applyWatermarkFromCustomData(customData) {
