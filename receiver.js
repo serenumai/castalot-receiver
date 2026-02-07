@@ -124,6 +124,8 @@
     const deg = Number(degrees) || 0;
     pendingRotation = deg;
     if (deg === 0) {
+      player.style.removeProperty('transform');
+      player.style.removeProperty('transform-origin');
       clearVideoRotation(player);
       return;
     }
@@ -133,9 +135,10 @@
     const scale = needsScale ? (Math.min(vw, vh) / Math.max(vw, vh)) : 1;
     const transformValue = 'rotate(' + deg + 'deg) scale(' + scale + ')';
 
-    // Apply rotation only to the <video> inside the shadow DOM
-    // (rotating the outer cast-media-player squishes the video into a portrait sliver)
-    applyToShadowVideo(player, transformValue);
+    // Apply rotation to the outer cast-media-player element only.
+    // The video renders correctly at full size inside, then the whole element rotates.
+    player.style.setProperty('transform', transformValue, 'important');
+    player.style.setProperty('transform-origin', 'center center', 'important');
 
     console.log('[Castalot] applied video rotation: ' + deg + 'deg, scale: ' + scale);
   }
