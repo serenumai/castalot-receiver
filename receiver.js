@@ -121,42 +121,37 @@
   function applyVideoRotation(degrees) {
     const deg = Number(degrees) || 0;
     pendingRotation = deg;
-
-    // Use playerManager.getMediaElement() — the official Cast SDK API
-    var video = playerManager.getMediaElement();
-    if (!video) {
-      console.log('[Castalot] no media element yet, will apply rotation after load');
-      return;
-    }
-    applyRotationToElement(video, deg);
+    // Don't apply during LOAD — wait for PLAYER_LOAD_COMPLETE
+    console.log('[Castalot] rotation queued: ' + deg + 'deg');
   }
 
-  function applyRotationToElement(video, deg) {
-    if (deg === 0) {
-      video.style.removeProperty('transform');
-      video.style.removeProperty('transform-origin');
-      console.log('[Castalot] rotation cleared');
+  function applyPendingRotation() {
+    var deg = pendingRotation;
+    if (deg === 0) return;
+    var player = document.getElementById('player');
+    if (!player || !player.shadowRoot) {
+      console.log('[Castalot] no shadowRoot, cannot apply rotation');
+      return;
+    }
+    var video = player.shadowRoot.querySelector('video');
+    if (!video) {
+      console.log('[Castalot] no video element in shadow DOM');
       return;
     }
 
-    // The video element renders content into its layout box, then CSS transforms
-    // are applied visually. For 90/270 rotation, the aspect ratio gets distorted
-    // because the content stretches to fill the rotated bounding box.
-    //
-    // Fix: counteract the stretch with inverse scale factors.
-    // After rotate(90deg) on a W×H element, content that was W×H fills a H×W box.
-    // The stretch factors are: X stretched by H/W, Y stretched by W/H.
-    // Counteract by scaling: scaleX(W/H) scaleY(H/W) AFTER the rotation.
     var vw = window.innerWidth;
     var vh = window.innerHeight;
-    var aspect = vw / vh; // e.g. 1920/1080 = 1.7778
+    var aspect = vw / vh;
 
     if (deg === 90 || deg === 270) {
-      // rotate(90deg) then counteract the stretch
+      // Rotate + counteract the aspect ratio distortion.
+      // After rotate(90deg), the bounding box swaps from W×H to H×W.
+      // The video surface stretches to fill this, distorting by aspect ratio.
+      // Counter-scale: scaleX(W/H) scaleY(H/W) undoes the stretch.
       var transformValue = 'rotate(' + deg + 'deg) scale(' + aspect + ', ' + (1 / aspect) + ')';
       video.style.setProperty('transform', transformValue, 'important');
       video.style.setProperty('transform-origin', 'center center', 'important');
-      console.log('[Castalot] rotation applied: ' + transformValue + ' (aspect=' + aspect.toFixed(4) + ')');
+      console.log('[Castalot] rotation applied: ' + transformValue);
     } else {
       video.style.setProperty('transform', 'rotate(' + deg + 'deg)', 'important');
       video.style.setProperty('transform-origin', 'center center', 'important');
@@ -204,10 +199,10 @@
       if (data && data.customData) {
         applyWatermarkFromCustomData(data.customData);
       }
-      // Re-apply rotation after player finishes loading (SDK may reset styles)
+      // Apply rotation after media is fully loaded
       if (pendingRotation !== 0) {
-        console.log('[Castalot] re-applying rotation after PLAYER_LOAD_COMPLETE');
-        applyVideoRotation(pendingRotation);
+        console.log('[Castalot] applying rotation after PLAYER_LOAD_COMPLETE');
+        applyPendingRotation();
       }
       if (slideshowActive) {
         hideSplash();
