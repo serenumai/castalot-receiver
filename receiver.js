@@ -117,115 +117,50 @@
   });
 
   let pendingRotation = 0;
-  let rotationCanvasActive = false;
-  let rotationAnimFrame = null;
 
   function applyVideoRotation(degrees) {
-    const player = document.getElementById('player');
-    if (!player) return;
     const deg = Number(degrees) || 0;
     pendingRotation = deg;
-    stopRotationCanvas();
-    if (deg === 0) return;
 
-    // Use canvas rendering — CSS transforms don't rotate the hardware video surface
-    var root = player.shadowRoot;
-    if (!root) {
-      console.log('[Castalot] no shadowRoot');
+    // Use playerManager.getMediaElement() — the official Cast SDK API
+    var video = playerManager.getMediaElement();
+    if (!video) {
+      console.log('[Castalot] no media element yet, will apply rotation after load');
       return;
     }
-    var video = root.querySelector('video');
-    if (video) {
-      startRotationCanvas(video, deg);
-    } else {
-      var observer = new MutationObserver(function() {
-        var v = root.querySelector('video');
-        if (v) {
-          startRotationCanvas(v, deg);
-          observer.disconnect();
-        }
-      });
-      observer.observe(root, { childList: true, subtree: true });
-    }
+    applyRotationToElement(video, deg);
   }
 
-  function startRotationCanvas(video, deg) {
-    stopRotationCanvas();
-    var canvas = document.createElement('canvas');
-    canvas.id = 'rotation-canvas';
+  function applyRotationToElement(video, deg) {
+    if (deg === 0) {
+      video.style.removeProperty('transform');
+      video.style.removeProperty('transform-origin');
+      console.log('[Castalot] rotation cleared');
+      return;
+    }
+
+    // The video element renders content into its layout box, then CSS transforms
+    // are applied visually. For 90/270 rotation, the aspect ratio gets distorted
+    // because the content stretches to fill the rotated bounding box.
+    //
+    // Fix: counteract the stretch with inverse scale factors.
+    // After rotate(90deg) on a W×H element, content that was W×H fills a H×W box.
+    // The stretch factors are: X stretched by H/W, Y stretched by W/H.
+    // Counteract by scaling: scaleX(W/H) scaleY(H/W) AFTER the rotation.
     var vw = window.innerWidth;
     var vh = window.innerHeight;
-    canvas.width = vw;
-    canvas.height = vh;
-    canvas.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:9999;';
-    document.body.appendChild(canvas);
+    var aspect = vw / vh; // e.g. 1920/1080 = 1.7778
 
-    var ctx = canvas.getContext('2d');
-    if (!ctx) {
-      console.warn('[Castalot] canvas 2d context unavailable');
-      return;
-    }
-    var rad = deg * Math.PI / 180;
-    rotationCanvasActive = true;
-    var frameCount = 0;
-
-    function draw() {
-      if (!rotationCanvasActive) return;
-      ctx.fillStyle = '#000';
-      ctx.fillRect(0, 0, vw, vh);
-
-      if (video.readyState >= 2 && video.videoWidth > 0) {
-        var videoW = video.videoWidth;
-        var videoH = video.videoHeight;
-        var is90or270 = (deg === 90 || deg === 270);
-        var rotW = is90or270 ? videoH : videoW;
-        var rotH = is90or270 ? videoW : videoH;
-        var scale = Math.min(vw / rotW, vh / rotH);
-        var drawW = videoW * scale;
-        var drawH = videoH * scale;
-
-        ctx.save();
-        ctx.translate(vw / 2, vh / 2);
-        ctx.rotate(rad);
-        try {
-          ctx.drawImage(video, -drawW / 2, -drawH / 2, drawW, drawH);
-        } catch (e) {
-          // If drawImage fails, show error text
-          ctx.fillStyle = '#f00';
-          ctx.font = '40px sans-serif';
-          ctx.fillText('drawImage error: ' + e.message, -300, 0);
-        }
-        ctx.restore();
-        if (frameCount === 0) {
-          console.log('[Castalot] canvas first frame: video=' + videoW + 'x' + videoH + ' draw=' + Math.round(drawW) + 'x' + Math.round(drawH));
-        }
-      } else {
-        // Video not ready yet — show status
-        ctx.fillStyle = '#fff';
-        ctx.font = '30px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText('Waiting for video (readyState=' + video.readyState + ', size=' + video.videoWidth + 'x' + video.videoHeight + ')', vw / 2, vh / 2);
-      }
-      frameCount++;
-      rotationAnimFrame = requestAnimationFrame(draw);
-    }
-    rotationAnimFrame = requestAnimationFrame(draw);
-    console.log('[Castalot] rotation canvas started: ' + deg + 'deg, viewport=' + vw + 'x' + vh);
-  }
-
-  function stopRotationCanvas() {
-    rotationCanvasActive = false;
-    if (rotationAnimFrame) {
-      cancelAnimationFrame(rotationAnimFrame);
-      rotationAnimFrame = null;
-    }
-    var existing = document.getElementById('rotation-canvas');
-    if (existing) existing.remove();
-    // Restore video visibility
-    var player = document.getElementById('player');
-    if (player && player.shadowRoot) {
-      var video = player.shadowRoot.querySelector('video');
-      if (video) video.style.removeProperty('opacity');
+    if (deg === 90 || deg === 270) {
+      // rotate(90deg) then counteract the stretch
+      var transformValue = 'rotate(' + deg + 'deg) scale(' + aspect + ', ' + (1 / aspect) + ')';
+      video.style.setProperty('transform', transformValue, 'important');
+      video.style.setProperty('transform-origin', 'center center', 'important');
+      console.log('[Castalot] rotation applied: ' + transformValue + ' (aspect=' + aspect.toFixed(4) + ')');
+    } else {
+      video.style.setProperty('transform', 'rotate(' + deg + 'deg)', 'important');
+      video.style.setProperty('transform-origin', 'center center', 'important');
+      console.log('[Castalot] rotation applied: rotate(' + deg + 'deg)');
     }
   }
 
