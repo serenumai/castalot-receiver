@@ -95,3 +95,21 @@ cast-media-player {
 .splash.visible {
   opacity: 1;
 }
+
+.file-hash {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font: 700 72px/1 monospace;
+  color: rgba(255, 255, 255, 0.85);
+  text-shadow: 0 4px 12px rgba(0, 0, 0, 0.9);
+  pointer-events: none;
+  z-index: 15;
+  opacity: 1;
+  transition: opacity 200ms ease;
+}
+
+.file-hash.hidden {
+  opacity: 0;
+}

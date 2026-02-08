@@ -7,6 +7,7 @@
   const watermarkTextEl = watermarkEl ? watermarkEl.querySelector('span') : null;
   const splashEl = document.getElementById('splash');
   const slideshowEl = document.getElementById('slideshow');
+  const fileHashEl = document.getElementById('fileHash');
   const slideshowNamespace = 'urn:x-cast:ai.serenum.castalot.slideshow';
   let splashVisible = false;
   let watermarkEnabledState = false;
@@ -134,6 +135,18 @@
     console.log('[Castalot] rotation ' + deg + 'deg — handled by sender, no CSS rotation applied');
   }
 
+  function applyFileHash(customData) {
+    if (!fileHashEl) return;
+    var hash = customData && typeof customData.fileHash === 'string' ? customData.fileHash : '';
+    if (hash) {
+      fileHashEl.textContent = hash;
+      fileHashEl.classList.remove('hidden');
+      console.log('[Castalot] fileHash: ' + hash);
+    } else {
+      fileHashEl.classList.add('hidden');
+    }
+  }
+
   function applyWatermarkFromCustomData(customData) {
     if (!customData) {
       setWatermarkVisible(false);
@@ -152,6 +165,7 @@
     cast.framework.messages.MessageType.LOAD,
     (loadRequestData) => {
       const customData = loadRequestData && loadRequestData.customData;
+      applyFileHash(customData);
       applyWatermarkFromCustomData(customData);
       applyVideoRotation(customData && customData.videoRotation);
       const slideshowData = customData && customData.slideshow;
