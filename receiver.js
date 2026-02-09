@@ -20,6 +20,14 @@
   let shakaPlayer = null;
   let hlsModeActive = false;
   let hlsStatusInterval = null;
+  let hlsTitle = '';
+  let hlsControlsAutoHideTimer = null;
+  const hlsControlsEl = document.getElementById('hlsControls');
+  const hlsTitleEl = document.getElementById('hlsTitle');
+  const hlsPlayPauseEl = document.getElementById('hlsPlayPause');
+  const hlsCurrentTimeEl = document.getElementById('hlsCurrentTime');
+  const hlsDurationEl = document.getElementById('hlsDuration');
+  const hlsProgressFillEl = document.getElementById('hlsProgressFill');
 
   function setPlayerVisible(visible) {
     const player = document.getElementById('player');
@@ -70,12 +78,16 @@
     hlsModeActive = true;
     setShakaVideoVisible(true);
 
+    document.addEventListener('keydown', onHlsKeyDown);
+
     shakaPlayer.load(hlsUrl).then(function() {
       console.log('[Castalot] Shaka HLS loaded:', hlsUrl);
       shakaVideoEl.play();
       hideSplash();
       // Broadcast status periodically so sender sees correct position/duration
       startHlsStatusBroadcast();
+      // Show controls briefly so user knows they exist
+      showHlsControls();
     }).catch(function(error) {
       console.error('[Castalot] Shaka load failed:', error);
       hlsModeActive = false;
@@ -86,6 +98,9 @@
   function stopShakaPlayback() {
     hlsModeActive = false;
     stopHlsStatusBroadcast();
+    document.removeEventListener('keydown', onHlsKeyDown);
+    hideHlsControls();
+    hlsTitle = '';
     if (shakaPlayer) {
       shakaPlayer.destroy();
       shakaPlayer = null;
@@ -100,6 +115,7 @@
     hlsStatusInterval = setInterval(function() {
       if (hlsModeActive) {
         try { playerManager.broadcastStatus(true); } catch(e) { /* ignore */ }
+        updateHlsControlsUI();
       }
     }, 1000);
   }
@@ -108,6 +124,132 @@
     if (hlsStatusInterval) {
       clearInterval(hlsStatusInterval);
       hlsStatusInterval = null;
+    }
+  }
+
+  // MARK: - HLS Controls Overlay
+
+  function formatTime(seconds) {
+    if (isNaN(seconds) || seconds < 0) return '0:00';
+    var s = Math.floor(seconds);
+    var h = Math.floor(s / 3600);
+    var m = Math.floor((s % 3600) / 60);
+    var sec = s % 60;
+    var pad = sec < 10 ? '0' : '';
+    if (h > 0) {
+      var mpad = m < 10 ? '0' : '';
+      return h + ':' + mpad + m + ':' + pad + sec;
+    }
+    return m + ':' + pad + sec;
+  }
+
+  function showHlsControls() {
+    if (!hlsModeActive || !hlsControlsEl) return;
+    hlsControlsEl.classList.remove('hidden');
+    updateHlsControlsUI();
+    resetHlsAutoHide();
+  }
+
+  function hideHlsControls() {
+    if (!hlsControlsEl) return;
+    hlsControlsEl.classList.add('hidden');
+    if (hlsControlsAutoHideTimer) {
+      clearTimeout(hlsControlsAutoHideTimer);
+      hlsControlsAutoHideTimer = null;
+    }
+  }
+
+  function resetHlsAutoHide() {
+    if (hlsControlsAutoHideTimer) {
+      clearTimeout(hlsControlsAutoHideTimer);
+    }
+    hlsControlsAutoHideTimer = setTimeout(function() {
+      hideHlsControls();
+    }, 5000);
+  }
+
+  function updateHlsControlsUI() {
+    if (!hlsModeActive || !shakaVideoEl) return;
+    var dur = shakaVideoEl.duration;
+    var pos = shakaVideoEl.currentTime;
+    var paused = shakaVideoEl.paused;
+
+    if (hlsPlayPauseEl) {
+      hlsPlayPauseEl.innerHTML = paused ? '&#9654;' : '&#9646;&#9646;';
+    }
+    if (hlsCurrentTimeEl) {
+      hlsCurrentTimeEl.textContent = formatTime(pos);
+    }
+    if (hlsDurationEl) {
+      hlsDurationEl.textContent = formatTime(dur);
+    }
+    if (hlsProgressFillEl && !isNaN(dur) && dur > 0) {
+      hlsProgressFillEl.style.width = ((pos / dur) * 100).toFixed(1) + '%';
+    }
+    if (hlsTitleEl) {
+      hlsTitleEl.textContent = hlsTitle;
+    }
+  }
+
+  function onHlsKeyDown(e) {
+    if (!hlsModeActive || !shakaVideoEl) return;
+    var controlsVisible = hlsControlsEl && !hlsControlsEl.classList.contains('hidden');
+
+    switch (e.keyCode) {
+      case 13:  // Enter / D-pad center
+      case 179: // MediaPlayPause
+        if (!controlsVisible) {
+          showHlsControls();
+        } else {
+          if (shakaVideoEl.paused) {
+            shakaVideoEl.play();
+          } else {
+            shakaVideoEl.pause();
+          }
+          updateHlsControlsUI();
+          resetHlsAutoHide();
+        }
+        e.preventDefault();
+        break;
+      case 37: // Left arrow — seek back 10s
+        shakaVideoEl.currentTime = Math.max(0, shakaVideoEl.currentTime - 10);
+        showHlsControls();
+        e.preventDefault();
+        break;
+      case 39: // Right arrow — seek forward 10s
+        shakaVideoEl.currentTime = Math.min(
+          shakaVideoEl.duration || 0,
+          shakaVideoEl.currentTime + 10
+        );
+        showHlsControls();
+        e.preventDefault();
+        break;
+      case 415: // MediaPlay
+        shakaVideoEl.play();
+        showHlsControls();
+        e.preventDefault();
+        break;
+      case 19:  // MediaPause
+      case 413: // MediaStop
+        shakaVideoEl.pause();
+        showHlsControls();
+        e.preventDefault();
+        break;
+      case 27:  // Escape
+      case 8:   // Back
+      case 461: // Back (LG/Samsung)
+        if (controlsVisible) {
+          hideHlsControls();
+          e.preventDefault();
+        }
+        break;
+      default:
+        // Any other key: show controls if hidden
+        if (!controlsVisible) {
+          showHlsControls();
+          e.preventDefault();
+        }
+        break;
     }
   }
 
@@ -266,6 +408,9 @@
       // HLS mode: use Shaka Player for playback, CAF for media session
       if (customData && customData.hlsMode === true && customData.hlsUrl) {
         console.log('[Castalot] HLS mode — Shaka + CAF bridge: ' + customData.hlsUrl);
+        // Extract title from metadata or customData
+        var meta = loadRequestData.media && loadRequestData.media.metadata;
+        hlsTitle = (meta && meta.title) || (customData && customData.title) || '';
         hideSplash();
         startShakaPlayback(customData.hlsUrl);
 
@@ -295,17 +440,22 @@
       var pos = shakaVideoEl.currentTime;
       var hasDuration = !isNaN(dur) && dur > 0;
 
-      if (hasDuration && statusMessage.status && statusMessage.status.length > 0) {
+      if (statusMessage.status && statusMessage.status.length > 0) {
         var s = statusMessage.status[0];
-        // Override player state with Shaka's actual state
-        if (shakaVideoEl.paused) {
-          s.playerState = cast.framework.messages.PlayerState.PAUSED;
+        if (hasDuration) {
+          // Override player state with Shaka's actual state
+          if (shakaVideoEl.paused) {
+            s.playerState = cast.framework.messages.PlayerState.PAUSED;
+          } else {
+            s.playerState = cast.framework.messages.PlayerState.PLAYING;
+          }
+          s.currentTime = pos;
+          if (s.media) {
+            s.media.duration = dur;
+          }
         } else {
-          s.playerState = cast.framework.messages.PlayerState.PLAYING;
-        }
-        s.currentTime = pos;
-        if (s.media) {
-          s.media.duration = dur;
+          // Shaka hasn't loaded yet — report BUFFERING so sender doesn't clear UI
+          s.playerState = cast.framework.messages.PlayerState.BUFFERING;
         }
       }
       return statusMessage;
@@ -321,6 +471,7 @@
         console.log('[Castalot] HLS seek to ' + seekData.currentTime);
         shakaVideoEl.currentTime = seekData.currentTime || 0;
         try { playerManager.broadcastStatus(true); } catch(e) { /* ignore */ }
+        showHlsControls();
         return null; // Handled by Shaka
       }
       return seekData;
@@ -334,6 +485,7 @@
         console.log('[Castalot] HLS pause');
         shakaVideoEl.pause();
         try { playerManager.broadcastStatus(true); } catch(e) { /* ignore */ }
+        showHlsControls();
         return null;
       }
       return data;
@@ -347,6 +499,7 @@
         console.log('[Castalot] HLS play');
         shakaVideoEl.play();
         try { playerManager.broadcastStatus(true); } catch(e) { /* ignore */ }
+        showHlsControls();
         return null;
       }
       return data;

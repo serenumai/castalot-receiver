@@ -11,6 +11,20 @@
 <body>
   <cast-media-player id="player"></cast-media-player>
   <video id="shakaVideo" class="hidden" autoplay style="position:absolute;top:0;left:0;width:100%;height:100%;background:#000;object-fit:contain;z-index:10;"></video>
+
+  <div id="hlsControls" class="hls-controls hidden" aria-hidden="true">
+    <div class="hls-top-bar">
+      <span id="hlsTitle" class="hls-title"></span>
+    </div>
+    <div class="hls-bottom-bar">
+      <span id="hlsPlayPause" class="hls-play-pause">&#9654;</span>
+      <span id="hlsCurrentTime" class="hls-time">0:00</span>
+      <div class="hls-progress-track" id="hlsProgressTrack">
+        <div class="hls-progress-fill" id="hlsProgressFill"></div>
+      </div>
+      <span id="hlsDuration" class="hls-time">0:00</span>
+    </div>
+  </div>
   <img id="slideshow" class="slideshow hidden" alt="" />
 
   <div id="watermark" class="watermark hidden" aria-hidden="true">
