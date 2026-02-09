@@ -1,4 +1,4 @@
-/* global cast */
+/* global cast, shaka */
 (() => {
   const context = cast.framework.CastReceiverContext.getInstance();
   const playerManager = context.getPlayerManager();
@@ -8,6 +8,7 @@
   const splashEl = document.getElementById('splash');
   const slideshowEl = document.getElementById('slideshow');
   const fileHashEl = document.getElementById('fileHash');
+  const shakaVideoEl = document.getElementById('shakaVideo');
   const slideshowNamespace = 'urn:x-cast:ai.serenum.castalot.slideshow';
   let splashVisible = false;
   let watermarkEnabledState = false;
@@ -16,11 +17,83 @@
   let slideshowUrls = [];
   let slideshowIndex = 0;
   let slideshowIntervalMs = 5000;
+  let shakaPlayer = null;
+  let hlsModeActive = false;
 
   function setPlayerVisible(visible) {
     const player = document.getElementById('player');
     if (!player) return;
     player.style.display = visible ? '' : 'none';
+    // When showing CAF player, hide Shaka video and vice versa
+    if (shakaVideoEl) {
+      shakaVideoEl.classList.toggle('hidden', visible || !hlsModeActive);
+    }
+  }
+
+  function setShakaVideoVisible(visible) {
+    if (!shakaVideoEl) return;
+    shakaVideoEl.classList.toggle('hidden', !visible);
+    // Hide CAF player when Shaka is active
+    const player = document.getElementById('player');
+    if (player) {
+      player.style.display = visible ? 'none' : '';
+    }
+  }
+
+  function startShakaPlayback(hlsUrl) {
+    if (!shakaVideoEl || typeof shaka === 'undefined') {
+      console.error('[Castalot] Shaka Player not available');
+      return;
+    }
+
+    // Clean up previous instance
+    stopShakaPlayback();
+
+    shaka.polyfill.installAll();
+    shakaPlayer = new shaka.Player();
+    shakaPlayer.attach(shakaVideoEl);
+
+    shakaPlayer.configure({
+      streaming: {
+        bufferingGoal: 10,
+        rebufferingGoal: 2,
+        bufferBehind: 30,
+        retryParameters: {
+          maxAttempts: 5,
+          baseDelay: 500,
+          backoffFactor: 1.5,
+          fuzzFactor: 0.5
+        }
+      }
+    });
+
+    shakaPlayer.addEventListener('error', function(event) {
+      console.error('[Castalot] Shaka error:', event.detail);
+    });
+
+    hlsModeActive = true;
+    setShakaVideoVisible(true);
+
+    shakaPlayer.load(hlsUrl).then(function() {
+      console.log('[Castalot] Shaka HLS loaded:', hlsUrl);
+      shakaVideoEl.play();
+      hideSplash();
+    }).catch(function(error) {
+      console.error('[Castalot] Shaka load failed:', error);
+      hlsModeActive = false;
+      setShakaVideoVisible(false);
+    });
+  }
+
+  function stopShakaPlayback() {
+    hlsModeActive = false;
+    if (shakaPlayer) {
+      shakaPlayer.destroy();
+      shakaPlayer = null;
+    }
+    if (shakaVideoEl) {
+      shakaVideoEl.classList.add('hidden');
+    }
   }
 
   function showSplash() {
@@ -176,6 +249,18 @@
         console.log('[Castalot] slideshow customData missing or invalid');
         stopSlideshow();
       }
+
+      // HLS mode: use Shaka Player instead of default CAF player
+      if (customData && customData.hlsMode === true && customData.hlsUrl) {
+        console.log('[Castalot] HLS mode — using Shaka Player: ' + customData.hlsUrl);
+        hideSplash();
+        startShakaPlayback(customData.hlsUrl);
+        // Return null to cancel default CAF load — Shaka handles playback
+        return null;
+      }
+
+      // Non-HLS: stop any active Shaka playback and use default CAF player
+      stopShakaPlayback();
       hideSplash();
       return loadRequestData;
     }
