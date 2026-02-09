@@ -1,4 +1,4 @@
-/* global cast, shaka */
+/* global cast */
 (() => {
   const context = cast.framework.CastReceiverContext.getInstance();
   const playerManager = context.getPlayerManager();
@@ -8,7 +8,6 @@
   const splashEl = document.getElementById('splash');
   const slideshowEl = document.getElementById('slideshow');
   const fileHashEl = document.getElementById('fileHash');
-  const shakaVideoEl = document.getElementById('shakaVideo');
   const slideshowNamespace = 'urn:x-cast:ai.serenum.castalot.slideshow';
   let splashVisible = false;
   let watermarkEnabledState = false;
@@ -17,83 +16,11 @@
   let slideshowUrls = [];
   let slideshowIndex = 0;
   let slideshowIntervalMs = 5000;
-  let shakaPlayer = null;
-  let hlsModeActive = false;
 
   function setPlayerVisible(visible) {
     const player = document.getElementById('player');
     if (!player) return;
     player.style.display = visible ? '' : 'none';
-    // When showing CAF player, hide Shaka video and vice versa
-    if (shakaVideoEl) {
-      shakaVideoEl.classList.toggle('hidden', visible || !hlsModeActive);
-    }
-  }
-
-  function setShakaVideoVisible(visible) {
-    if (!shakaVideoEl) return;
-    shakaVideoEl.classList.toggle('hidden', !visible);
-    // Hide CAF player when Shaka is active
-    const player = document.getElementById('player');
-    if (player) {
-      player.style.display = visible ? 'none' : '';
-    }
-  }
-
-  function startShakaPlayback(hlsUrl) {
-    if (!shakaVideoEl || typeof shaka === 'undefined') {
-      console.error('[Castalot] Shaka Player not available');
-      return;
-    }
-
-    // Clean up previous instance
-    stopShakaPlayback();
-
-    shaka.polyfill.installAll();
-    shakaPlayer = new shaka.Player();
-    shakaPlayer.attach(shakaVideoEl);
-
-    shakaPlayer.configure({
-      streaming: {
-        bufferingGoal: 10,
-        rebufferingGoal: 2,
-        bufferBehind: 30,
-        retryParameters: {
-          maxAttempts: 5,
-          baseDelay: 500,
-          backoffFactor: 1.5,
-          fuzzFactor: 0.5
-        }
-      }
-    });
-
-    shakaPlayer.addEventListener('error', function(event) {
-      console.error('[Castalot] Shaka error:', event.detail);
-    });
-
-    hlsModeActive = true;
-    setShakaVideoVisible(true);
-
-    shakaPlayer.load(hlsUrl).then(function() {
-      console.log('[Castalot] Shaka HLS loaded:', hlsUrl);
-      shakaVideoEl.play();
-      hideSplash();
-    }).catch(function(error) {
-      console.error('[Castalot] Shaka load failed:', error);
-      hlsModeActive = false;
-      setShakaVideoVisible(false);
-    });
-  }
-
-  function stopShakaPlayback() {
-    hlsModeActive = false;
-    if (shakaPlayer) {
-      shakaPlayer.destroy();
-      shakaPlayer = null;
-    }
-    if (shakaVideoEl) {
-      shakaVideoEl.classList.add('hidden');
-    }
   }
 
   function showSplash() {
@@ -195,16 +122,12 @@
   function applyVideoRotation(degrees) {
     const deg = Number(degrees) || 0;
     pendingRotation = deg;
-    // Don't apply during LOAD — wait for PLAYER_LOAD_COMPLETE
     console.log('[Castalot] rotation queued: ' + deg + 'deg');
   }
 
   function applyPendingRotation() {
     var deg = pendingRotation;
     if (deg === 0) return;
-    // CSS transforms cannot rotate video on Android TV hardware overlay.
-    // filter:brightness(1) forces software compositing but makes video invisible.
-    // Rotation is handled by the sender (iOS) during remux/transcode instead.
     console.log('[Castalot] rotation ' + deg + 'deg — handled by sender, no CSS rotation applied');
   }
 
@@ -250,17 +173,20 @@
         stopSlideshow();
       }
 
-      // HLS mode: use Shaka Player instead of default CAF player
+      // HLS mode: let CAF handle HLS natively with fMP4 segment format
       if (customData && customData.hlsMode === true && customData.hlsUrl) {
-        console.log('[Castalot] HLS mode — using Shaka Player: ' + customData.hlsUrl);
+        console.log('[Castalot] HLS mode — CAF native: ' + customData.hlsUrl);
+
+        // Point CAF at the HLS playlist URL
+        loadRequestData.media.contentUrl = customData.hlsUrl;
+        loadRequestData.media.contentType = 'application/x-mpegURL';
+        loadRequestData.media.hlsSegmentFormat = cast.framework.messages.HlsSegmentFormat.FMP4;
+
         hideSplash();
-        startShakaPlayback(customData.hlsUrl);
-        // Return null to cancel default CAF load — Shaka handles playback
-        return null;
+        return loadRequestData;
       }
 
-      // Non-HLS: stop any active Shaka playback and use default CAF player
-      stopShakaPlayback();
+      // Non-HLS: default CAF player
       hideSplash();
       return loadRequestData;
     }
@@ -273,7 +199,6 @@
       if (data && data.customData) {
         applyWatermarkFromCustomData(data.customData);
       }
-      // Apply rotation after media is fully loaded
       if (pendingRotation !== 0) {
         console.log('[Castalot] applying rotation after PLAYER_LOAD_COMPLETE');
         applyPendingRotation();
