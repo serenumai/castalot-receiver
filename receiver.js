@@ -1,4 +1,4 @@
-/* global cast */
+/* global cast, shaka */
 (() => {
   const context = cast.framework.CastReceiverContext.getInstance();
   const playerManager = context.getPlayerManager();
@@ -8,6 +8,7 @@
   const splashEl = document.getElementById('splash');
   const slideshowEl = document.getElementById('slideshow');
   const fileHashEl = document.getElementById('fileHash');
+  const shakaVideoEl = document.getElementById('shakaVideo');
   const slideshowNamespace = 'urn:x-cast:ai.serenum.castalot.slideshow';
   let splashVisible = false;
   let watermarkEnabledState = false;
@@ -16,11 +17,98 @@
   let slideshowUrls = [];
   let slideshowIndex = 0;
   let slideshowIntervalMs = 5000;
+  let shakaPlayer = null;
+  let hlsModeActive = false;
+  let hlsStatusInterval = null;
 
   function setPlayerVisible(visible) {
     const player = document.getElementById('player');
     if (!player) return;
     player.style.display = visible ? '' : 'none';
+  }
+
+  function setShakaVideoVisible(visible) {
+    if (!shakaVideoEl) return;
+    shakaVideoEl.classList.toggle('hidden', !visible);
+    // Hide CAF player when Shaka is active
+    const player = document.getElementById('player');
+    if (player) {
+      player.style.display = visible ? 'none' : '';
+    }
+  }
+
+  function startShakaPlayback(hlsUrl) {
+    if (!shakaVideoEl || typeof shaka === 'undefined') {
+      console.error('[Castalot] Shaka Player not available');
+      return;
+    }
+
+    stopShakaPlayback();
+
+    shaka.polyfill.installAll();
+    shakaPlayer = new shaka.Player();
+    shakaPlayer.attach(shakaVideoEl);
+
+    shakaPlayer.configure({
+      streaming: {
+        bufferingGoal: 10,
+        rebufferingGoal: 2,
+        bufferBehind: 30,
+        retryParameters: {
+          maxAttempts: 5,
+          baseDelay: 500,
+          backoffFactor: 1.5,
+          fuzzFactor: 0.5
+        }
+      }
+    });
+
+    shakaPlayer.addEventListener('error', function(event) {
+      console.error('[Castalot] Shaka error:', event.detail);
+    });
+
+    hlsModeActive = true;
+    setShakaVideoVisible(true);
+
+    shakaPlayer.load(hlsUrl).then(function() {
+      console.log('[Castalot] Shaka HLS loaded:', hlsUrl);
+      shakaVideoEl.play();
+      hideSplash();
+      // Broadcast status periodically so sender sees correct position/duration
+      startHlsStatusBroadcast();
+    }).catch(function(error) {
+      console.error('[Castalot] Shaka load failed:', error);
+      hlsModeActive = false;
+      setShakaVideoVisible(false);
+    });
+  }
+
+  function stopShakaPlayback() {
+    hlsModeActive = false;
+    stopHlsStatusBroadcast();
+    if (shakaPlayer) {
+      shakaPlayer.destroy();
+      shakaPlayer = null;
+    }
+    if (shakaVideoEl) {
+      shakaVideoEl.classList.add('hidden');
+    }
+  }
+
+  function startHlsStatusBroadcast() {
+    stopHlsStatusBroadcast();
+    hlsStatusInterval = setInterval(function() {
+      if (hlsModeActive) {
+        try { playerManager.broadcastStatus(true); } catch(e) { /* ignore */ }
+      }
+    }, 1000);
+  }
+
+  function stopHlsStatusBroadcast() {
+    if (hlsStatusInterval) {
+      clearInterval(hlsStatusInterval);
+      hlsStatusInterval = null;
+    }
   }
 
   function showSplash() {
@@ -157,6 +245,8 @@
     setWatermarkVisible(enabled);
   }
 
+  // MARK: - LOAD interceptor
+
   playerManager.setMessageInterceptor(
     cast.framework.messages.MessageType.LOAD,
     (loadRequestData) => {
@@ -173,24 +263,97 @@
         stopSlideshow();
       }
 
-      // HLS mode: let CAF handle HLS natively with fMP4 segment format
+      // HLS mode: use Shaka Player for playback, CAF for media session
       if (customData && customData.hlsMode === true && customData.hlsUrl) {
-        console.log('[Castalot] HLS mode — CAF native: ' + customData.hlsUrl);
+        console.log('[Castalot] HLS mode — Shaka + CAF bridge: ' + customData.hlsUrl);
+        hideSplash();
+        startShakaPlayback(customData.hlsUrl);
 
-        // Point CAF at the HLS playlist URL
+        // Return loadRequestData so CAF creates a media session (for controls).
+        // CAF's native player will fail to play Apple fMP4, but we override
+        // MEDIA_STATUS to report Shaka's state instead.
         loadRequestData.media.contentUrl = customData.hlsUrl;
         loadRequestData.media.contentType = 'application/x-mpegURL';
-        loadRequestData.media.hlsSegmentFormat = cast.framework.messages.HlsSegmentFormat.FMP4;
-
-        hideSplash();
         return loadRequestData;
       }
 
-      // Non-HLS: default CAF player
+      // Non-HLS: stop any active Shaka playback and use default CAF player
+      stopShakaPlayback();
       hideSplash();
       return loadRequestData;
     }
   );
+
+  // MARK: - Media status bridge: override CAF status with Shaka state
+
+  playerManager.setMessageInterceptor(
+    cast.framework.messages.MessageType.MEDIA_STATUS,
+    (statusMessage) => {
+      if (!hlsModeActive || !shakaVideoEl) return statusMessage;
+
+      var dur = shakaVideoEl.duration;
+      var pos = shakaVideoEl.currentTime;
+      var hasDuration = !isNaN(dur) && dur > 0;
+
+      if (hasDuration && statusMessage.status && statusMessage.status.length > 0) {
+        var s = statusMessage.status[0];
+        // Override player state with Shaka's actual state
+        if (shakaVideoEl.paused) {
+          s.playerState = cast.framework.messages.PlayerState.PAUSED;
+        } else {
+          s.playerState = cast.framework.messages.PlayerState.PLAYING;
+        }
+        s.currentTime = pos;
+        if (s.media) {
+          s.media.duration = dur;
+        }
+      }
+      return statusMessage;
+    }
+  );
+
+  // MARK: - Control bridges: forward SEEK/PAUSE/PLAY to Shaka
+
+  playerManager.setMessageInterceptor(
+    cast.framework.messages.MessageType.SEEK,
+    (seekData) => {
+      if (hlsModeActive && shakaVideoEl) {
+        console.log('[Castalot] HLS seek to ' + seekData.currentTime);
+        shakaVideoEl.currentTime = seekData.currentTime || 0;
+        try { playerManager.broadcastStatus(true); } catch(e) { /* ignore */ }
+        return null; // Handled by Shaka
+      }
+      return seekData;
+    }
+  );
+
+  playerManager.setMessageInterceptor(
+    cast.framework.messages.MessageType.PAUSE,
+    (data) => {
+      if (hlsModeActive && shakaVideoEl) {
+        console.log('[Castalot] HLS pause');
+        shakaVideoEl.pause();
+        try { playerManager.broadcastStatus(true); } catch(e) { /* ignore */ }
+        return null;
+      }
+      return data;
+    }
+  );
+
+  playerManager.setMessageInterceptor(
+    cast.framework.messages.MessageType.PLAY,
+    (data) => {
+      if (hlsModeActive && shakaVideoEl) {
+        console.log('[Castalot] HLS play');
+        shakaVideoEl.play();
+        try { playerManager.broadcastStatus(true); } catch(e) { /* ignore */ }
+        return null;
+      }
+      return data;
+    }
+  );
+
+  // MARK: - CAF events
 
   playerManager.addEventListener(
     cast.framework.events.EventType.PLAYER_LOAD_COMPLETE,
@@ -218,6 +381,8 @@
       playerStateEvent,
       () => {
         const state = playerManager.getPlayerState();
+        // Don't show splash if Shaka is active (CAF might report IDLE due to load failure)
+        if (hlsModeActive) return;
         if (state === cast.framework.messages.PlayerState.IDLE && !slideshowActive) {
           showSplash();
         } else {
