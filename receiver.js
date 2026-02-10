@@ -25,6 +25,7 @@
   let hlsTotalDuration = 0;
   let hlsControlsAutoHideTimer = null;
   let hlsSeekPending = false;
+  let hlsPendingSeekTarget = null; // Track pending seek target for MEDIA_STATUS reporting
   const hlsControlsEl = document.getElementById('hlsControls');
   const hlsTitleEl = document.getElementById('hlsTitle');
   const hlsPlayPauseEl = document.getElementById('hlsPlayPause');
@@ -520,6 +521,7 @@
       if (customData && customData.hlsMode === true && customData.hlsUrl) {
         console.log('[Castalot] HLS mode — Shaka + CAF bridge: ' + customData.hlsUrl);
         hlsSeekPending = false; // New LOAD arrived — sender restarted successfully
+        hlsPendingSeekTarget = null;
         hideSplash();
         startShakaPlayback(customData.hlsUrl);
         // Set title and duration AFTER startShakaPlayback — it calls stopShakaPlayback()
@@ -557,12 +559,17 @@
         var s = statusMessage.status[0];
         if (info) {
           // Override player state with Shaka's actual state
-          if (shakaVideoEl.paused) {
+          if (hlsPendingSeekTarget !== null) {
+            // A seek-ahead is pending — report the target position so sender detects it
+            s.playerState = cast.framework.messages.PlayerState.BUFFERING;
+            s.currentTime = hlsPendingSeekTarget;
+          } else if (shakaVideoEl.paused) {
             s.playerState = cast.framework.messages.PlayerState.PAUSED;
+            s.currentTime = info.position;
           } else {
             s.playerState = cast.framework.messages.PlayerState.PLAYING;
+            s.currentTime = info.position;
           }
-          s.currentTime = info.position;
           if (s.media) {
             s.media.duration = info.duration;
           }
@@ -607,6 +614,7 @@
       return;
     }
     hlsSeekPending = true;
+    hlsPendingSeekTarget = position; // Report this in MEDIA_STATUS so sender detects it
     var payload = { type: 'seekRequest', position: position };
     console.log('[Castalot] Requesting sender to transcode from ' + position.toFixed(1) + 's');
     showHlsBuffering();
@@ -617,36 +625,37 @@
         console.warn('[Castalot] Failed to send seek request:', err);
       }
     });
-    // Safety timeout: if sender doesn't respond with a new LOAD within 10s, unlock
+    // Safety timeout: if sender doesn't respond with a new LOAD within 15s, unlock
     setTimeout(function() {
       if (hlsSeekPending) {
         console.log('[Castalot] Seek pending timeout — unlocking');
         hlsSeekPending = false;
+        hlsPendingSeekTarget = null;
       }
-    }, 10000);
+    }, 15000);
   }
 
   function handleSeekTarget(target) {
-    // The transcoder runs ~6x real-time, so the server almost always has far more content
+    // The transcoder runs ~6x real-time, so the server usually has more content
     // than Shaka's cached seekRange() shows (Shaka only updates on playlist refresh).
     //
     // Strategy:
-    //   - Set currentTime directly without clamping. If the segment exists in the playlist
-    //     Shaka last fetched, it seeks immediately. If not, Shaka will refresh the playlist
-    //     and find it (since the server is ahead). Brief buffering may occur.
-    //   - Only request sender restart for truly large jumps (>60s beyond seekRange) where
-    //     the content genuinely hasn't been transcoded yet.
+    //   - For small seeks within seekRange: set currentTime directly (instant).
+    //   - For seeks modestly beyond seekRange (up to 30s): set currentTime and let Shaka
+    //     refresh its playlist — the server likely has the segments already.
+    //   - For seeks far beyond seekRange (>30s): request sender to restart transcoding
+    //     from that position. The sender will send a new LOAD when ready.
     var seekableEnd = getSeekableEnd();
     var totalDur = hlsTotalDuration || 0;
     console.log('[Castalot] handleSeekTarget: target=' + target.toFixed(1) + ' seekableEnd=' + (seekableEnd !== null ? seekableEnd.toFixed(1) : 'null') + ' totalDur=' + totalDur.toFixed(1));
 
-    if (seekableEnd !== null && target > seekableEnd + 60 && target < totalDur - 1) {
-      // Well beyond transcoded range — request sender to restart transcode from this position
+    if (seekableEnd !== null && target > seekableEnd + 30 && target < totalDur - 1) {
+      // Beyond what's likely transcoded — request sender to restart transcode
       console.log('[Castalot] Seek target ' + target.toFixed(1) + 's beyond seekable end ' + seekableEnd.toFixed(1) + 's — requesting sender restart');
       requestSenderSeek(target);
       return;
     }
-    // Seek directly — don't clamp. Shaka will refresh playlist and find the segment.
+    // Seek directly — within or just beyond seekRange. Shaka will refresh playlist if needed.
     target = Math.max(0, Math.min(target, totalDur > 0 ? totalDur : target));
     shakaVideoEl.currentTime = target;
   }
