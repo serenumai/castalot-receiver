@@ -612,22 +612,40 @@
         console.warn('[Castalot] Failed to send seek request:', err);
       }
     });
+    // Safety timeout: if sender doesn't respond with a new LOAD within 10s, unlock
+    setTimeout(function() {
+      if (hlsSeekPending) {
+        console.log('[Castalot] Seek pending timeout — unlocking');
+        hlsSeekPending = false;
+      }
+    }, 10000);
   }
 
   function handleSeekTarget(target) {
-    // If the target is within the seekable range, seek directly.
-    // If it's beyond the transcoded range, ask the sender to restart from that point.
+    // Three zones:
+    // 1. Within Shaka's buffered range → seek directly
+    // 2. Slightly beyond buffer but likely available on server → clamp and let Shaka catch up
+    // 3. Far beyond buffer (>20s past seekable end) → ask sender to restart transcode
+    //
+    // The 20s margin is important because Shaka's seekRange() reflects what's been DOWNLOADED,
+    // not what's AVAILABLE on the server. The server may have many more segments ready.
+    // A right-arrow press (+10s) from near the buffer edge should NOT trigger a restart.
     var seekableEnd = getSeekableEnd();
-    if (seekableEnd !== null && target > seekableEnd + 1) {
-      // Beyond available range — request sender to restart transcode from this position
-      console.log('[Castalot] Seek target ' + target.toFixed(1) + 's beyond seekable end ' + seekableEnd.toFixed(1) + 's — requesting sender restart');
+    var totalDur = hlsTotalDuration || 0;
+    console.log('[Castalot] handleSeekTarget: target=' + target.toFixed(1) + ' seekableEnd=' + (seekableEnd !== null ? seekableEnd.toFixed(1) : 'null') + ' totalDur=' + totalDur.toFixed(1));
+
+    if (seekableEnd !== null && target > seekableEnd + 20 && target < totalDur - 1) {
+      // Far beyond available range — request sender to restart transcode from this position
+      console.log('[Castalot] Seek target ' + target.toFixed(1) + 's far beyond seekable end ' + seekableEnd.toFixed(1) + 's — requesting sender restart');
       requestSenderSeek(target);
       return;
     }
-    // Within range — seek directly, clamping to available buffer
+    // Within or near range — seek directly. If slightly beyond buffer, Shaka will buffer forward.
+    // Clamp to seekable end if needed to avoid Shaka snap-back.
     var clamped = target;
     if (seekableEnd !== null && target > seekableEnd) {
       clamped = Math.max(0, seekableEnd - 0.5);
+      console.log('[Castalot] Clamped seek from ' + target.toFixed(1) + ' to ' + clamped.toFixed(1));
     }
     clamped = Math.max(0, clamped);
     shakaVideoEl.currentTime = clamped;
