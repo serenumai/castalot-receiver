@@ -688,7 +688,16 @@
       }
     }, 30000);
 
-    shakaVideoEl.currentTime = target;
+    // Only set currentTime when target is within Shaka's seekable range.
+    // Setting currentTime beyond the seekable range puts the video element into
+    // a permanent seeking/waiting state (MSE has no data there), stalling playback.
+    // For out-of-range seeks, hlsIntendedPosition in MEDIA_STATUS is enough —
+    // the sender will detect seek-ahead and restart transcoding from the target.
+    if (seekableEnd !== null && target > seekableEnd + 1) {
+      console.log('[Castalot] Target beyond seekable range, not setting currentTime (sender will handle via MEDIA_STATUS)');
+    } else {
+      shakaVideoEl.currentTime = target;
+    }
   }
 
   // MARK: - Control bridges: forward SEEK/PAUSE/PLAY to Shaka
