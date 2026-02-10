@@ -129,8 +129,26 @@
 
   // MARK: - HLS Controls Overlay
 
+  function getShakaDuration() {
+    // shakaPlayer.seekRange() is the reliable source for HLS duration.
+    // video.duration can be Infinity or garbage before manifest is fully parsed.
+    if (shakaPlayer) {
+      try {
+        var range = shakaPlayer.seekRange();
+        if (range && isFinite(range.end) && range.end > 0) {
+          return { position: shakaVideoEl.currentTime - (range.start || 0), duration: range.end - (range.start || 0) };
+        }
+      } catch(e) { /* player may be destroyed */ }
+    }
+    var d = shakaVideoEl ? shakaVideoEl.duration : NaN;
+    if (isFinite(d) && d > 0) {
+      return { position: shakaVideoEl.currentTime, duration: d };
+    }
+    return null;
+  }
+
   function formatTime(seconds) {
-    if (isNaN(seconds) || seconds < 0) return '0:00';
+    if (!isFinite(seconds) || seconds < 0) return '0:00';
     var s = Math.floor(seconds);
     var h = Math.floor(s / 3600);
     var m = Math.floor((s % 3600) / 60);
@@ -170,8 +188,9 @@
 
   function updateHlsControlsUI() {
     if (!hlsModeActive || !shakaVideoEl) return;
-    var dur = shakaVideoEl.duration;
-    var pos = shakaVideoEl.currentTime;
+    var info = getShakaDuration();
+    var pos = info ? info.position : 0;
+    var dur = info ? info.duration : 0;
     var paused = shakaVideoEl.paused;
 
     if (hlsPlayPauseEl) {
@@ -181,10 +200,10 @@
       hlsCurrentTimeEl.textContent = formatTime(pos);
     }
     if (hlsDurationEl) {
-      hlsDurationEl.textContent = formatTime(dur);
+      hlsDurationEl.textContent = info ? formatTime(dur) : '--:--';
     }
-    if (hlsProgressFillEl && !isNaN(dur) && dur > 0) {
-      hlsProgressFillEl.style.width = ((pos / dur) * 100).toFixed(1) + '%';
+    if (hlsProgressFillEl) {
+      hlsProgressFillEl.style.width = (dur > 0 ? ((pos / dur) * 100).toFixed(1) : '0') + '%';
     }
     if (hlsTitleEl) {
       hlsTitleEl.textContent = hlsTitle;
@@ -217,10 +236,9 @@
         e.preventDefault();
         break;
       case 39: // Right arrow — seek forward 10s
-        shakaVideoEl.currentTime = Math.min(
-          shakaVideoEl.duration || 0,
-          shakaVideoEl.currentTime + 10
-        );
+        var fwdInfo = getShakaDuration();
+        var maxTime = fwdInfo ? fwdInfo.duration : (shakaVideoEl.duration || 0);
+        shakaVideoEl.currentTime = Math.min(maxTime, shakaVideoEl.currentTime + 10);
         showHlsControls();
         e.preventDefault();
         break;
@@ -436,22 +454,20 @@
     (statusMessage) => {
       if (!hlsModeActive || !shakaVideoEl) return statusMessage;
 
-      var dur = shakaVideoEl.duration;
-      var pos = shakaVideoEl.currentTime;
-      var hasDuration = !isNaN(dur) && dur > 0;
+      var info = getShakaDuration();
 
       if (statusMessage.status && statusMessage.status.length > 0) {
         var s = statusMessage.status[0];
-        if (hasDuration) {
+        if (info) {
           // Override player state with Shaka's actual state
           if (shakaVideoEl.paused) {
             s.playerState = cast.framework.messages.PlayerState.PAUSED;
           } else {
             s.playerState = cast.framework.messages.PlayerState.PLAYING;
           }
-          s.currentTime = pos;
+          s.currentTime = info.position;
           if (s.media) {
-            s.media.duration = dur;
+            s.media.duration = info.duration;
           }
         } else {
           // Shaka hasn't loaded yet — report BUFFERING so sender doesn't clear UI
@@ -468,8 +484,18 @@
     cast.framework.messages.MessageType.SEEK,
     (seekData) => {
       if (hlsModeActive && shakaVideoEl) {
-        console.log('[Castalot] HLS seek to ' + seekData.currentTime);
-        shakaVideoEl.currentTime = seekData.currentTime || 0;
+        var seekTarget = seekData.currentTime || 0;
+        // Offset by seek range start for HLS streams
+        if (shakaPlayer) {
+          try {
+            var sr = shakaPlayer.seekRange();
+            if (sr && isFinite(sr.start) && sr.start > 0) {
+              seekTarget += sr.start;
+            }
+          } catch(e) { /* ignore */ }
+        }
+        console.log('[Castalot] HLS seek to ' + seekTarget);
+        shakaVideoEl.currentTime = seekTarget;
         try { playerManager.broadcastStatus(true); } catch(e) { /* ignore */ }
         showHlsControls();
         return null; // Handled by Shaka
