@@ -66,14 +66,19 @@
 
     shakaPlayer.configure({
       streaming: {
-        bufferingGoal: 10,
-        rebufferingGoal: 2,
+        bufferingGoal: 6,
+        rebufferingGoal: 1,
         bufferBehind: 30,
         retryParameters: {
           maxAttempts: 5,
           baseDelay: 500,
           backoffFactor: 1.5,
           fuzzFactor: 0.5
+        }
+      },
+      manifest: {
+        hls: {
+          ignoreManifestProgramDateTime: true
         }
       }
     });
@@ -258,12 +263,12 @@
         e.preventDefault();
         break;
       case 37: // Left arrow — seek back 10s
-        shakaVideoEl.currentTime = Math.max(0, shakaVideoEl.currentTime - 10);
+        handleSeekTarget(Math.max(0, shakaVideoEl.currentTime - 10));
         showHlsControls();
         e.preventDefault();
         break;
       case 39: // Right arrow — seek forward 10s
-        seekLocalClamped(shakaVideoEl.currentTime + 10);
+        handleSeekTarget(shakaVideoEl.currentTime + 10);
         showHlsControls();
         e.preventDefault();
         break;
@@ -621,40 +626,35 @@
     }, 10000);
   }
 
-  function seekLocalClamped(target) {
-    // For keyboard seeks (right/left arrow), just clamp to seekable range and seek directly.
-    // Never trigger sender restart — the transcoder runs ahead of playback so content
-    // will be available shortly. This prevents 10s-forward presses from restarting transcode.
-    var seekableEnd = getSeekableEnd();
-    if (seekableEnd !== null && target > seekableEnd) {
-      target = seekableEnd;
-    }
-    target = Math.max(0, target);
-    console.log('[Castalot] seekLocalClamped: target=' + target.toFixed(1) + ' seekableEnd=' + (seekableEnd !== null ? seekableEnd.toFixed(1) : 'null'));
-    shakaVideoEl.currentTime = target;
-  }
-
   function handleSeekTarget(target) {
     // For HLS EVENT playlists, seekRange() reflects all segments in the PLAYLIST (what's been
     // transcoded), not just what's been buffered/downloaded. Shaka can seek to any position
     // within the seekRange — it will download the needed segment on demand.
     //
-    // So: seeks within seekRange → let Shaka handle directly (no clamping)
-    //     seeks beyond seekRange → content not yet transcoded → ask sender to restart
+    // The transcoder runs faster than real-time (~6x on hardware), so the server typically
+    // has far more segments than Shaka's last playlist refresh shows. We use a generous
+    // margin (30s) to avoid requesting a full transcode restart for seeks that are only
+    // slightly beyond what Shaka's cached seekRange reports. If the content IS available,
+    // Shaka will refresh the playlist and find the segment. If not, it will buffer briefly
+    // until the transcoder catches up.
+    //
+    // Only request sender restart for truly large jumps beyond the transcoded frontier.
     var seekableEnd = getSeekableEnd();
     var totalDur = hlsTotalDuration || 0;
     console.log('[Castalot] handleSeekTarget: target=' + target.toFixed(1) + ' seekableEnd=' + (seekableEnd !== null ? seekableEnd.toFixed(1) : 'null') + ' totalDur=' + totalDur.toFixed(1));
 
-    // Add small margin (3s) for playlist refresh timing — the server may have a segment
-    // that hasn't appeared in the playlist Shaka last fetched
-    if (seekableEnd !== null && target > seekableEnd + 3 && target < totalDur - 1) {
-      // Beyond transcoded range — request sender to restart transcode from this position
+    if (seekableEnd !== null && target > seekableEnd + 30 && target < totalDur - 1) {
+      // Well beyond transcoded range — request sender to restart transcode from this position
       console.log('[Castalot] Seek target ' + target.toFixed(1) + 's beyond seekable end ' + seekableEnd.toFixed(1) + 's — requesting sender restart');
       requestSenderSeek(target);
       return;
     }
-    // Within seekable range — seek directly. Shaka will download the segment if not buffered.
-    target = Math.max(0, Math.min(target, seekableEnd !== null ? seekableEnd : target));
+    // Within or near seekable range — seek directly. Shaka will refresh playlist if needed.
+    if (seekableEnd !== null && target > seekableEnd) {
+      // Clamp to seekableEnd for now; Shaka will buffer and catch up
+      target = seekableEnd;
+    }
+    target = Math.max(0, target);
     shakaVideoEl.currentTime = target;
   }
 
