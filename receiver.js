@@ -263,7 +263,7 @@
         e.preventDefault();
         break;
       case 39: // Right arrow — seek forward 10s
-        handleSeekTarget(shakaVideoEl.currentTime + 10);
+        seekLocalClamped(shakaVideoEl.currentTime + 10);
         showHlsControls();
         e.preventDefault();
         break;
@@ -619,6 +619,19 @@
         hlsSeekPending = false;
       }
     }, 10000);
+  }
+
+  function seekLocalClamped(target) {
+    // For keyboard seeks (right/left arrow), just clamp to seekable range and seek directly.
+    // Never trigger sender restart — the transcoder runs ahead of playback so content
+    // will be available shortly. This prevents 10s-forward presses from restarting transcode.
+    var seekableEnd = getSeekableEnd();
+    if (seekableEnd !== null && target > seekableEnd) {
+      target = seekableEnd;
+    }
+    target = Math.max(0, target);
+    console.log('[Castalot] seekLocalClamped: target=' + target.toFixed(1) + ' seekableEnd=' + (seekableEnd !== null ? seekableEnd.toFixed(1) : 'null'));
+    shakaVideoEl.currentTime = target;
   }
 
   function handleSeekTarget(target) {
