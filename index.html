@@ -20,6 +20,7 @@
       <span id="hlsPlayPause" class="hls-play-pause">&#9654;</span>
       <span id="hlsCurrentTime" class="hls-time">0:00</span>
       <div class="hls-progress-track" id="hlsProgressTrack">
+        <div class="hls-progress-seekable" id="hlsProgressSeekable"></div>
         <div class="hls-progress-fill" id="hlsProgressFill"></div>
       </div>
       <span id="hlsDuration" class="hls-time">0:00</span>
@@ -33,6 +34,12 @@
   </div>
 
   <div id="fileHash" class="file-hash hidden" aria-hidden="true"></div>
+
+  <div id="hlsBuffering" class="hls-buffering hidden" aria-hidden="true">
+    <div class="hls-buffering-text">Preparing...</div>
+  </div>
+
+  <div id="modeBadge" class="mode-badge hidden" aria-hidden="true"></div>
 
   <div id="splash" class="splash hidden" aria-hidden="true">
     <div class="splash-card">
