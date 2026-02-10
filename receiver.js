@@ -627,34 +627,27 @@
   }
 
   function handleSeekTarget(target) {
-    // For HLS EVENT playlists, seekRange() reflects all segments in the PLAYLIST (what's been
-    // transcoded), not just what's been buffered/downloaded. Shaka can seek to any position
-    // within the seekRange — it will download the needed segment on demand.
+    // The transcoder runs ~6x real-time, so the server almost always has far more content
+    // than Shaka's cached seekRange() shows (Shaka only updates on playlist refresh).
     //
-    // The transcoder runs faster than real-time (~6x on hardware), so the server typically
-    // has far more segments than Shaka's last playlist refresh shows. We use a generous
-    // margin (30s) to avoid requesting a full transcode restart for seeks that are only
-    // slightly beyond what Shaka's cached seekRange reports. If the content IS available,
-    // Shaka will refresh the playlist and find the segment. If not, it will buffer briefly
-    // until the transcoder catches up.
-    //
-    // Only request sender restart for truly large jumps beyond the transcoded frontier.
+    // Strategy:
+    //   - Set currentTime directly without clamping. If the segment exists in the playlist
+    //     Shaka last fetched, it seeks immediately. If not, Shaka will refresh the playlist
+    //     and find it (since the server is ahead). Brief buffering may occur.
+    //   - Only request sender restart for truly large jumps (>60s beyond seekRange) where
+    //     the content genuinely hasn't been transcoded yet.
     var seekableEnd = getSeekableEnd();
     var totalDur = hlsTotalDuration || 0;
     console.log('[Castalot] handleSeekTarget: target=' + target.toFixed(1) + ' seekableEnd=' + (seekableEnd !== null ? seekableEnd.toFixed(1) : 'null') + ' totalDur=' + totalDur.toFixed(1));
 
-    if (seekableEnd !== null && target > seekableEnd + 30 && target < totalDur - 1) {
+    if (seekableEnd !== null && target > seekableEnd + 60 && target < totalDur - 1) {
       // Well beyond transcoded range — request sender to restart transcode from this position
       console.log('[Castalot] Seek target ' + target.toFixed(1) + 's beyond seekable end ' + seekableEnd.toFixed(1) + 's — requesting sender restart');
       requestSenderSeek(target);
       return;
     }
-    // Within or near seekable range — seek directly. Shaka will refresh playlist if needed.
-    if (seekableEnd !== null && target > seekableEnd) {
-      // Clamp to seekableEnd for now; Shaka will buffer and catch up
-      target = seekableEnd;
-    }
-    target = Math.max(0, target);
+    // Seek directly — don't clamp. Shaka will refresh playlist and find the segment.
+    target = Math.max(0, Math.min(target, totalDur > 0 ? totalDur : target));
     shakaVideoEl.currentTime = target;
   }
 
