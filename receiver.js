@@ -21,6 +21,7 @@
   let hlsModeActive = false;
   let hlsStatusInterval = null;
   let hlsTitle = '';
+  let hlsTotalDuration = 0;
   let hlsControlsAutoHideTimer = null;
   const hlsControlsEl = document.getElementById('hlsControls');
   const hlsTitleEl = document.getElementById('hlsTitle');
@@ -101,6 +102,7 @@
     document.removeEventListener('keydown', onHlsKeyDown);
     hideHlsControls();
     hlsTitle = '';
+    hlsTotalDuration = 0;
     if (shakaPlayer) {
       shakaPlayer.destroy();
       shakaPlayer = null;
@@ -130,19 +132,17 @@
   // MARK: - HLS Controls Overlay
 
   function getShakaDuration() {
-    // shakaPlayer.seekRange() is the reliable source for HLS duration.
-    // video.duration can be Infinity or garbage before manifest is fully parsed.
-    if (shakaPlayer) {
-      try {
-        var range = shakaPlayer.seekRange();
-        if (range && isFinite(range.end) && range.end > 0) {
-          return { position: shakaVideoEl.currentTime - (range.start || 0), duration: range.end - (range.start || 0) };
-        }
-      } catch(e) { /* player may be destroyed */ }
+    // The sender passes the real total duration in customData.duration.
+    // video.duration and seekRange() only reflect segments transcoded so far
+    // (HLS EVENT playlist grows over time), so they're unreliable for total length.
+    var pos = shakaVideoEl ? shakaVideoEl.currentTime : 0;
+    if (hlsTotalDuration > 0) {
+      return { position: pos, duration: hlsTotalDuration };
     }
+    // Fallback: try video.duration if it's finite (e.g. after transcode completes and playlist becomes VOD)
     var d = shakaVideoEl ? shakaVideoEl.duration : NaN;
     if (isFinite(d) && d > 0) {
-      return { position: shakaVideoEl.currentTime, duration: d };
+      return { position: pos, duration: d };
     }
     return null;
   }
@@ -426,9 +426,11 @@
       // HLS mode: use Shaka Player for playback, CAF for media session
       if (customData && customData.hlsMode === true && customData.hlsUrl) {
         console.log('[Castalot] HLS mode — Shaka + CAF bridge: ' + customData.hlsUrl);
-        // Extract title from metadata or customData
+        // Extract title and duration from metadata/customData
         var meta = loadRequestData.media && loadRequestData.media.metadata;
         hlsTitle = (meta && meta.title) || (customData && customData.title) || '';
+        hlsTotalDuration = (typeof customData.duration === 'number' && customData.duration > 0) ? customData.duration : 0;
+        console.log('[Castalot] HLS total duration from sender: ' + hlsTotalDuration);
         hideSplash();
         startShakaPlayback(customData.hlsUrl);
 
@@ -485,15 +487,6 @@
     (seekData) => {
       if (hlsModeActive && shakaVideoEl) {
         var seekTarget = seekData.currentTime || 0;
-        // Offset by seek range start for HLS streams
-        if (shakaPlayer) {
-          try {
-            var sr = shakaPlayer.seekRange();
-            if (sr && isFinite(sr.start) && sr.start > 0) {
-              seekTarget += sr.start;
-            }
-          } catch(e) { /* ignore */ }
-        }
         console.log('[Castalot] HLS seek to ' + seekTarget);
         shakaVideoEl.currentTime = seekTarget;
         try { playerManager.broadcastStatus(true); } catch(e) { /* ignore */ }
@@ -527,6 +520,18 @@
         try { playerManager.broadcastStatus(true); } catch(e) { /* ignore */ }
         showHlsControls();
         return null;
+      }
+      return data;
+    }
+  );
+
+  playerManager.setMessageInterceptor(
+    cast.framework.messages.MessageType.STOP,
+    (data) => {
+      if (hlsModeActive) {
+        console.log('[Castalot] HLS stop');
+        stopShakaPlayback();
+        setPlayerVisible(true);
       }
       return data;
     }
