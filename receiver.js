@@ -35,6 +35,16 @@
   const modeBadgeEl = document.getElementById('modeBadge');
   let modeBadgeTimer = null;
 
+  // Intended position tracking: where the user *wants* to be, independent of Shaka's clamped currentTime.
+  // This prevents the tug-of-war where broadcastStatus reports Shaka's clamped position,
+  // overriding the user's seek intent. Cleared when Shaka catches up or a new LOAD arrives.
+  let hlsIntendedPosition = null;
+  let hlsIntendedPositionTimeout = null;
+
+  // Accelerating D-pad seek: consecutive arrow presses increase seek delta
+  let hlsSeekAccelCount = 0;
+  let hlsSeekAccelTimer = null;
+
   function setPlayerVisible(visible) {
     const player = document.getElementById('player');
     if (!player) return;
@@ -109,9 +119,27 @@
     });
   }
 
+  function clearHlsIntendedPosition() {
+    hlsIntendedPosition = null;
+    if (hlsIntendedPositionTimeout) {
+      clearTimeout(hlsIntendedPositionTimeout);
+      hlsIntendedPositionTimeout = null;
+    }
+  }
+
+  function clearHlsSeekAccel() {
+    hlsSeekAccelCount = 0;
+    if (hlsSeekAccelTimer) {
+      clearTimeout(hlsSeekAccelTimer);
+      hlsSeekAccelTimer = null;
+    }
+  }
+
   function stopShakaPlayback() {
     hlsModeActive = false;
     stopHlsStatusBroadcast();
+    clearHlsIntendedPosition();
+    clearHlsSeekAccel();
     document.removeEventListener('keydown', onHlsKeyDown);
     hideHlsControls();
     hideHlsBuffering();
@@ -131,10 +159,18 @@
     stopHlsStatusBroadcast();
     hlsStatusInterval = setInterval(function() {
       if (hlsModeActive) {
+        // Check if Shaka has caught up to the intended position (content was available)
+        if (hlsIntendedPosition !== null && shakaVideoEl) {
+          if (Math.abs(shakaVideoEl.currentTime - hlsIntendedPosition) < 3) {
+            console.log('[Castalot] Shaka caught up to intended position ' + hlsIntendedPosition.toFixed(1) + ', clearing');
+            clearHlsIntendedPosition();
+            hideHlsBuffering();
+          }
+        }
         try { playerManager.broadcastStatus(true); } catch(e) { /* ignore */ }
         updateHlsControlsUI();
-        // Auto-hide buffering when Shaka is actually playing
-        if (shakaVideoEl && !shakaVideoEl.paused && shakaVideoEl.currentTime > 0) {
+        // Auto-hide buffering when Shaka is actually playing and no intended position pending
+        if (hlsIntendedPosition === null && shakaVideoEl && !shakaVideoEl.paused && shakaVideoEl.currentTime > 0) {
           hideHlsBuffering();
         }
       }
@@ -213,6 +249,11 @@
     var dur = info ? info.duration : 0;
     var paused = shakaVideoEl.paused;
 
+    // Use intended position for display if the user has sought ahead
+    if (hlsIntendedPosition !== null) {
+      pos = hlsIntendedPosition;
+    }
+
     if (hlsPlayPauseEl) {
       hlsPlayPauseEl.innerHTML = paused ? '&#9654;' : '&#9646;&#9646;';
     }
@@ -261,16 +302,33 @@
         }
         e.preventDefault();
         break;
-      case 37: // Left arrow — seek back 10s
-        handleSeekTarget(Math.max(0, shakaVideoEl.currentTime - 10));
+      case 37: // Left arrow — seek back (accelerating)
+      case 39: // Right arrow — seek forward (accelerating)
+      {
+        // Accelerating seek: consecutive presses increase the delta
+        hlsSeekAccelCount++;
+        if (hlsSeekAccelTimer) clearTimeout(hlsSeekAccelTimer);
+        hlsSeekAccelTimer = setTimeout(function() {
+          hlsSeekAccelCount = 0;
+          hlsSeekAccelTimer = null;
+        }, 800);
+
+        var delta;
+        if (hlsSeekAccelCount <= 2) delta = 10;
+        else if (hlsSeekAccelCount <= 4) delta = 30;
+        else if (hlsSeekAccelCount <= 6) delta = 60;
+        else delta = 120;
+
+        // Use intended position as base when set, so consecutive presses
+        // accumulate from the user's target rather than Shaka's clamped position
+        var base = (hlsIntendedPosition !== null) ? hlsIntendedPosition : shakaVideoEl.currentTime;
+        var target = (e.keyCode === 39) ? base + delta : Math.max(0, base - delta);
+        console.log('[Castalot] D-pad seek: accel=' + hlsSeekAccelCount + ' delta=' + (e.keyCode === 39 ? '+' : '-') + delta + 's target=' + target.toFixed(1));
+        handleSeekTarget(target);
         showHlsControls();
         e.preventDefault();
         break;
-      case 39: // Right arrow — seek forward 10s
-        handleSeekTarget(shakaVideoEl.currentTime + 10);
-        showHlsControls();
-        e.preventDefault();
-        break;
+      }
       case 415: // MediaPlay
         shakaVideoEl.play();
         showHlsControls();
@@ -554,13 +612,21 @@
       if (statusMessage.status && statusMessage.status.length > 0) {
         var s = statusMessage.status[0];
         if (info) {
-          // Override player state with Shaka's actual state
-          if (shakaVideoEl.paused) {
-            s.playerState = cast.framework.messages.PlayerState.PAUSED;
+          if (hlsIntendedPosition !== null) {
+            // Report the user's intended seek position, not Shaka's clamped currentTime.
+            // This lets the sender's checkForSeekAhead() detect when the user wants
+            // to be beyond the transcoded range, triggering a transcode restart.
+            s.currentTime = hlsIntendedPosition;
+            s.playerState = cast.framework.messages.PlayerState.BUFFERING;
           } else {
-            s.playerState = cast.framework.messages.PlayerState.PLAYING;
+            // Normal playback — report Shaka's actual state
+            if (shakaVideoEl.paused) {
+              s.playerState = cast.framework.messages.PlayerState.PAUSED;
+            } else {
+              s.playerState = cast.framework.messages.PlayerState.PLAYING;
+            }
+            s.currentTime = info.position;
           }
-          s.currentTime = info.position;
           if (s.media) {
             s.media.duration = info.duration;
           }
@@ -603,6 +669,25 @@
     target = Math.max(0, Math.min(target, totalDur > 0 ? totalDur : target));
     var seekableEnd = getSeekableEnd();
     console.log('[Castalot] handleSeekTarget: target=' + target.toFixed(1) + ' seekableEnd=' + (seekableEnd !== null ? seekableEnd.toFixed(1) : 'null') + ' totalDur=' + totalDur.toFixed(1));
+
+    // Track the user's intended position so MEDIA_STATUS and controls report it
+    // instead of Shaka's clamped currentTime. This enables the sender to detect
+    // seek-ahead and prevents the visual tug-of-war.
+    hlsIntendedPosition = target;
+    showHlsBuffering();
+
+    // Safety timeout: clear intended position after 30s to prevent permanent stuck state
+    if (hlsIntendedPositionTimeout) {
+      clearTimeout(hlsIntendedPositionTimeout);
+    }
+    hlsIntendedPositionTimeout = setTimeout(function() {
+      if (hlsIntendedPosition !== null) {
+        console.log('[Castalot] Intended position safety timeout — clearing');
+        clearHlsIntendedPosition();
+        hideHlsBuffering();
+      }
+    }, 30000);
+
     shakaVideoEl.currentTime = target;
   }
 
