@@ -45,6 +45,10 @@
   let hlsSeekAccelCount = 0;
   let hlsSeekAccelTimer = null;
 
+  // Saved HLS URL for manifest reload when seeking beyond seekRange
+  let hlsCurrentUrl = null;
+  let hlsSeekRetryTimer = null;
+
   function setPlayerVisible(visible) {
     const player = document.getElementById('player');
     if (!player) return;
@@ -97,6 +101,7 @@
     });
 
     hlsModeActive = true;
+    hlsCurrentUrl = hlsUrl;
     setShakaVideoVisible(true);
     showHlsBuffering();
 
@@ -125,6 +130,10 @@
       clearTimeout(hlsIntendedPositionTimeout);
       hlsIntendedPositionTimeout = null;
     }
+    if (hlsSeekRetryTimer) {
+      clearTimeout(hlsSeekRetryTimer);
+      hlsSeekRetryTimer = null;
+    }
   }
 
   function clearHlsSeekAccel() {
@@ -140,6 +149,8 @@
     stopHlsStatusBroadcast();
     clearHlsIntendedPosition();
     clearHlsSeekAccel();
+    hlsCurrentUrl = null;
+    if (hlsSeekRetryTimer) { clearTimeout(hlsSeekRetryTimer); hlsSeekRetryTimer = null; }
     document.removeEventListener('keydown', onHlsKeyDown);
     hideHlsControls();
     hideHlsBuffering();
@@ -704,10 +715,33 @@
     // Only set currentTime when target is within Shaka's seekable range.
     // Setting currentTime beyond the seekable range puts the video element into
     // a permanent seeking/waiting state (MSE has no data there), stalling playback.
-    // For out-of-range seeks, hlsIntendedPosition in MEDIA_STATUS is enough —
-    // the sender will detect seek-ahead and restart transcoding from the target.
     if (seekableEnd !== null && target > seekableEnd + 1) {
-      console.log('[Castalot] Target beyond seekable range, not setting currentTime (sender will handle via MEDIA_STATUS)');
+      console.log('[Castalot] Target beyond seekable range (' + seekableEnd.toFixed(1) + '), scheduling manifest reload');
+      // Schedule a Shaka reload after 3s to force a manifest refresh.
+      // The transcoder runs ~6x speed, so by then the server likely has the content.
+      // After reload, Shaka has a fresh manifest and we can seek to the target.
+      if (hlsSeekRetryTimer) clearTimeout(hlsSeekRetryTimer);
+      hlsSeekRetryTimer = setTimeout(function() {
+        hlsSeekRetryTimer = null;
+        if (!hlsModeActive || !shakaPlayer || hlsIntendedPosition === null || !hlsCurrentUrl) return;
+        var retryTarget = hlsIntendedPosition;
+        console.log('[Castalot] Reloading Shaka manifest to seek to ' + retryTarget.toFixed(1));
+        // Save state that gets cleared by load
+        var savedTitle = hlsTitle;
+        var savedDuration = hlsTotalDuration;
+        shakaPlayer.load(hlsCurrentUrl).then(function() {
+          hlsTitle = savedTitle;
+          hlsTotalDuration = savedDuration;
+          console.log('[Castalot] Manifest reloaded, seeking to ' + retryTarget.toFixed(1));
+          shakaVideoEl.currentTime = retryTarget;
+          shakaVideoEl.play();
+          clearHlsIntendedPosition();
+          hideHlsBuffering();
+          updateHlsControlsUI();
+        }).catch(function(err) {
+          console.error('[Castalot] Manifest reload failed:', err);
+        });
+      }, 3000);
     } else {
       shakaVideoEl.currentTime = target;
     }
