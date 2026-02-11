@@ -55,6 +55,10 @@
   let hlsCurrentUrl = null;
   let hlsSeekRetryTimer = null;
 
+  // Time offset: when sender restarts transcode from position N, fMP4 PTS starts at N
+  // but Shaka normalizes via MSE timestampOffset so currentTime ≈ 0. This offset converts.
+  let hlsTimeOffset = 0;
+
   function setPlayerVisible(visible) {
     const player = document.getElementById('player');
     if (!player) return;
@@ -156,6 +160,7 @@
     clearHlsIntendedPosition();
     clearHlsSeekAccel();
     hlsCurrentUrl = null;
+    hlsTimeOffset = 0;
     if (hlsSeekRetryTimer) { clearTimeout(hlsSeekRetryTimer); hlsSeekRetryTimer = null; }
     document.removeEventListener('keydown', onHlsKeyDown);
     hideHlsControls();
@@ -178,20 +183,20 @@
       if (hlsModeActive) {
         // Check if intended position can be resolved
         if (hlsIntendedPosition !== null && shakaVideoEl && !hlsSeekAccelTimer) {
-          if (Math.abs(shakaVideoEl.currentTime - hlsIntendedPosition) < 3) {
+          var absolutePos = shakaVideoEl.currentTime + hlsTimeOffset;
+          if (shakaVideoEl.readyState >= 2 && Math.abs(absolutePos - hlsIntendedPosition) < 3) {
             // Shaka already at (or near) the intended position
-            console.log('[Castalot] Shaka caught up to intended position ' + hlsIntendedPosition.toFixed(1) + ', clearing');
+            console.log('[Castalot] Shaka caught up to intended position ' + hlsIntendedPosition.toFixed(1) + ' (absolutePos=' + absolutePos.toFixed(1) + '), clearing');
             clearHlsIntendedPosition();
             hideHlsBuffering();
           } else {
             // Check if Shaka's seekable range has grown to include the target.
-            // The server may have the content (transcoder runs ahead), but Shaka
-            // didn't know about it when we first tried to seek. After a manifest
-            // refresh, seekRange expands — now we can actually perform the seek.
+            // Convert intended position to Shaka-relative for comparison.
+            var shakaIntended = hlsIntendedPosition - hlsTimeOffset;
             var end = getSeekableEnd();
-            if (end !== null && hlsIntendedPosition <= end + 1) {
-              console.log('[Castalot] Seekable range now includes intended position ' + hlsIntendedPosition.toFixed(1) + ' (seekableEnd=' + end.toFixed(1) + '), seeking now');
-              shakaVideoEl.currentTime = hlsIntendedPosition;
+            if (end !== null && shakaIntended >= 0 && shakaIntended <= end + 1) {
+              console.log('[Castalot] Seekable range now includes intended position ' + hlsIntendedPosition.toFixed(1) + ' (shakaTarget=' + shakaIntended.toFixed(1) + ' seekableEnd=' + end.toFixed(1) + '), seeking now');
+              shakaVideoEl.currentTime = shakaIntended;
               clearHlsIntendedPosition();
               hideHlsBuffering();
             }
@@ -222,14 +227,17 @@
     // video.duration and seekRange() only reflect segments transcoded so far
     // (HLS EVENT playlist grows over time), so they're unreliable for total length.
     var pos = shakaVideoEl ? shakaVideoEl.currentTime : 0;
+    // Apply time offset: Shaka's currentTime is relative to transcode start,
+    // but the sender/UI needs absolute position within the full video.
+    var absolutePos = pos + hlsTimeOffset;
     if (hlsTotalDuration > 0) {
-      return { position: pos, duration: hlsTotalDuration };
+      return { position: absolutePos, duration: hlsTotalDuration };
     }
     // Fallback: try video.duration if it's finite and reasonable (< 24 hours).
     // HLS EVENT playlists can produce huge garbage values from the media source timeline.
     var d = shakaVideoEl ? shakaVideoEl.duration : NaN;
     if (isFinite(d) && d > 0 && d < 86400) {
-      return { position: pos, duration: d };
+      return { position: absolutePos, duration: d + hlsTimeOffset };
     }
     return null;
   }
@@ -302,9 +310,10 @@
     // Show seekable range (transcoded portion) as a lighter bar behind the playback position
     if (hlsProgressSeekableEl && dur > 0) {
       var seekableEnd = getSeekableEnd();
-      if (seekableEnd !== null && seekableEnd < dur * 0.99) {
+      var absoluteSeekableEnd = (seekableEnd !== null) ? seekableEnd + hlsTimeOffset : null;
+      if (absoluteSeekableEnd !== null && absoluteSeekableEnd < dur * 0.99) {
         // Still transcoding — show how much is available
-        hlsProgressSeekableEl.style.width = ((seekableEnd / dur) * 100).toFixed(1) + '%';
+        hlsProgressSeekableEl.style.width = ((absoluteSeekableEnd / dur) * 100).toFixed(1) + '%';
       } else {
         // Fully transcoded or no range info — fill to 100%
         hlsProgressSeekableEl.style.width = '100%';
@@ -353,8 +362,9 @@
         else delta = 120;
 
         // Use intended position as base when set, so consecutive presses
-        // accumulate from the user's target rather than Shaka's clamped position
-        var base = (hlsIntendedPosition !== null) ? hlsIntendedPosition : shakaVideoEl.currentTime;
+        // accumulate from the user's target rather than Shaka's clamped position.
+        // Base is always in absolute time (with hlsTimeOffset applied).
+        var base = (hlsIntendedPosition !== null) ? hlsIntendedPosition : (shakaVideoEl.currentTime + hlsTimeOffset);
         var target = (e.keyCode === 39) ? base + delta : Math.max(0, base - delta);
         console.log('[Castalot] D-pad seek: accel=' + hlsSeekAccelCount + ' delta=' + (e.keyCode === 39 ? '+' : '-') + delta + 's target=' + target.toFixed(1));
         handleSeekTarget(target);
@@ -733,12 +743,13 @@
         console.log('[Castalot] HLS mode — Shaka + CAF bridge: ' + customData.hlsUrl);
         hideSplash();
         startShakaPlayback(customData.hlsUrl);
-        // Set title and duration AFTER startShakaPlayback — it calls stopShakaPlayback()
-        // internally which clears these values, so they must be set after that cleanup.
+        // Set title, duration, and time offset AFTER startShakaPlayback — it calls
+        // stopShakaPlayback() internally which clears these values.
         var meta = loadRequestData.media && loadRequestData.media.metadata;
         hlsTitle = (meta && meta.title) || (customData && customData.title) || '';
         hlsTotalDuration = (typeof customData.duration === 'number' && customData.duration > 0) ? customData.duration : 0;
-        console.log('[Castalot] HLS total duration from sender: ' + hlsTotalDuration);
+        hlsTimeOffset = (typeof customData.hlsStartOffset === 'number') ? customData.hlsStartOffset : 0;
+        console.log('[Castalot] HLS total duration from sender: ' + hlsTotalDuration + ', timeOffset: ' + hlsTimeOffset);
 
         // Return loadRequestData so CAF creates a media session (for controls).
         // CAF's native player will fail to play Apple fMP4, but we override
@@ -814,18 +825,15 @@
   }
 
   function handleSeekTarget(target) {
-    // Always set currentTime directly. The transcoder runs ~6x real-time, so the server
-    // almost always has the content already. Shaka will refresh its playlist and find it.
-    //
-    // If the target is genuinely beyond the transcoded frontier, Shaka will stall/buffer.
-    // The sender monitors streamPosition and will restart transcoding when it detects
-    // a position beyond what's been transcoded (sender knows the exact frontier).
+    // Target is always in absolute time (full video position).
+    // Convert to Shaka-relative by subtracting hlsTimeOffset.
     var totalDur = hlsTotalDuration || 0;
     target = Math.max(0, Math.min(target, totalDur > 0 ? totalDur : target));
+    var shakaTarget = target - hlsTimeOffset;
     var seekableEnd = getSeekableEnd();
-    console.log('[Castalot] handleSeekTarget: target=' + target.toFixed(1) + ' seekableEnd=' + (seekableEnd !== null ? seekableEnd.toFixed(1) : 'null') + ' totalDur=' + totalDur.toFixed(1));
+    console.log('[Castalot] handleSeekTarget: target=' + target.toFixed(1) + ' shakaTarget=' + shakaTarget.toFixed(1) + ' seekableEnd=' + (seekableEnd !== null ? seekableEnd.toFixed(1) : 'null') + ' hlsTimeOffset=' + hlsTimeOffset.toFixed(1) + ' totalDur=' + totalDur.toFixed(1));
 
-    // Track the user's intended position so MEDIA_STATUS and controls report it
+    // Track the user's intended position (absolute) so MEDIA_STATUS and controls report it
     // instead of Shaka's clamped currentTime. This enables the sender to detect
     // seek-ahead and prevents the visual tug-of-war.
     hlsIntendedPosition = target;
@@ -843,51 +851,71 @@
       }
     }, 30000);
 
-    // Only set currentTime when target is within Shaka's seekable range.
-    // Setting currentTime beyond the seekable range puts the video element into
-    // a permanent seeking/waiting state (MSE has no data there), stalling playback.
-    if (seekableEnd !== null && target > seekableEnd + 1) {
-      console.log('[Castalot] Target beyond seekable range (' + seekableEnd.toFixed(1) + '), scheduling manifest reload');
-      // Schedule a Shaka reload after 3s to force a manifest refresh.
-      // The transcoder runs ~6x speed, so by then the server likely has the content.
-      // After reload, Shaka has a fresh manifest and we can seek to the target.
+    // Target is before current transcode range — need sender restart
+    if (shakaTarget < 0) {
+      console.log('[Castalot] Target before current transcode range (offset=' + hlsTimeOffset.toFixed(1) + '), requesting sender restart');
+      sendSeekRequest(target);
+      return;
+    }
+
+    // Target is beyond Shaka's seekable range
+    if (seekableEnd !== null && shakaTarget > seekableEnd + 1) {
+      console.log('[Castalot] Target beyond seekable range (' + seekableEnd.toFixed(1) + '), sending seekRequest to sender');
+      // Send seekRequest to sender immediately — sender handles the restart.
+      // Do NOT schedule the 3s manifest reload (eliminates race condition).
+      sendSeekRequest(target);
+      // Safety fallback: if sender doesn't send a new LOAD within 15s, try manifest reload
       if (hlsSeekRetryTimer) clearTimeout(hlsSeekRetryTimer);
       hlsSeekRetryTimer = setTimeout(function() {
         hlsSeekRetryTimer = null;
         if (!hlsModeActive || !shakaPlayer || hlsIntendedPosition === null || !hlsCurrentUrl) return;
         var retryTarget = hlsIntendedPosition;
-        console.log('[Castalot] Reloading Shaka manifest to seek to ' + retryTarget.toFixed(1));
-        // Save state that gets cleared by load
+        console.log('[Castalot] Safety fallback: reloading manifest for ' + retryTarget.toFixed(1));
         var savedTitle = hlsTitle;
         var savedDuration = hlsTotalDuration;
+        var savedOffset = hlsTimeOffset;
         shakaPlayer.load(hlsCurrentUrl).then(function() {
           hlsTitle = savedTitle;
           hlsTotalDuration = savedDuration;
-          // Verify the target is actually reachable in the refreshed manifest.
-          // If the transcoder hasn't caught up yet, the seekable range won't
-          // include the target — seeking would clamp to seekableEnd, losing
-          // the user's intended position. Let the sender restart handle it.
+          hlsTimeOffset = savedOffset;
           var newEnd = getSeekableEnd();
-          if (newEnd !== null && retryTarget > newEnd + 1) {
-            console.log('[Castalot] Manifest reloaded but target ' + retryTarget.toFixed(1) + ' still beyond range (end=' + newEnd.toFixed(1) + '), waiting for sender restart');
+          var shakaRetry = retryTarget - hlsTimeOffset;
+          if (newEnd !== null && shakaRetry > newEnd + 1) {
+            console.log('[Castalot] Manifest reloaded but target still beyond range, waiting for sender');
             shakaVideoEl.play();
             updateHlsControlsUI();
             return;
           }
-          console.log('[Castalot] Manifest reloaded, seeking to ' + retryTarget.toFixed(1) + ' (seekableEnd=' + (newEnd !== null ? newEnd.toFixed(1) : 'null') + ')');
-          shakaVideoEl.currentTime = retryTarget;
+          console.log('[Castalot] Manifest reloaded, seeking to shakaTarget=' + shakaRetry.toFixed(1));
+          shakaVideoEl.currentTime = shakaRetry;
           shakaVideoEl.play();
           clearHlsIntendedPosition();
-          // Don't hideHlsBuffering() here — let the status interval hide it
-          // once video.readyState >= HAVE_CURRENT_DATA, avoiding black flash
           updateHlsControlsUI();
         }).catch(function(err) {
-          console.error('[Castalot] Manifest reload failed:', err);
+          console.error('[Castalot] Safety manifest reload failed:', err);
         });
-      }, 3000);
+      }, 15000);
     } else {
-      shakaVideoEl.currentTime = target;
+      // Target is within seekable range — seek directly
+      shakaVideoEl.currentTime = shakaTarget;
     }
+  }
+
+  function sendSeekRequest(absolutePosition) {
+    var senders = context.getSenders();
+    if (!senders || senders.length === 0) {
+      console.warn('[Castalot] No senders to send seekRequest to');
+      return;
+    }
+    var payload = JSON.stringify({ type: 'seekRequest', position: absolutePosition });
+    senders.forEach(function(sender) {
+      try {
+        context.sendCustomMessage(hlsNamespace, sender.senderId, payload);
+        console.log('[Castalot] Sent seekRequest to ' + sender.senderId + ': position=' + absolutePosition.toFixed(1));
+      } catch (err) {
+        console.warn('[Castalot] Failed to send seekRequest:', err);
+      }
+    });
   }
 
   // MARK: - Control bridges: forward SEEK/PAUSE/PLAY to Shaka
