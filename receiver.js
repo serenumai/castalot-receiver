@@ -34,7 +34,12 @@
   const hlsBufferingEl = document.getElementById('hlsBuffering');
   const modeBadgeEl = document.getElementById('modeBadge');
   let modeBadgeTimer = null;
+  const slideshowOverlayEl = document.getElementById('slideshowOverlay');
+  const slideshowCounterEl = document.getElementById('slideshowCounter');
+  const slideshowPauseBadgeEl = document.getElementById('slideshowPauseBadge');
   const splashTitleEl = document.querySelector('.splash-title');
+  let slideshowPaused = false;
+  let slideshowOverlayTimer = null;
 
   // Intended position tracking: where the user *wants* to be, independent of Shaka's clamped currentTime.
   // This prevents the tug-of-war where broadcastStatus reports Shaka's clamped position,
@@ -475,12 +480,15 @@
 
   function stopSlideshow() {
     slideshowActive = false;
+    slideshowPaused = false;
     if (slideshowTimer) {
       clearInterval(slideshowTimer);
       slideshowTimer = null;
     }
     slideshowUrls = [];
     slideshowIndex = 0;
+    document.removeEventListener('keydown', onSlideshowKeyDown);
+    hideSlideshowOverlay();
     hideSlideshow();
     setPlayerVisible(true);
   }
@@ -498,12 +506,15 @@
     hideSplash();
     slideshowEl.src = slideshowUrls[slideshowIndex];
     sendSlideshowStatus();
+    document.addEventListener('keydown', onSlideshowKeyDown);
     slideshowTimer = setInterval(() => {
       slideshowIndex = (slideshowIndex + 1) % slideshowUrls.length;
       console.log('[Castalot] slideshow next', { index: slideshowIndex, url: slideshowUrls[slideshowIndex] });
       slideshowEl.src = slideshowUrls[slideshowIndex];
       sendSlideshowStatus();
+      updateSlideshowOverlay();
     }, slideshowIntervalMs);
+    showSlideshowOverlay();
   }
 
   function sendSlideshowStatus() {
@@ -522,6 +533,117 @@
         console.warn('[Castalot] slideshow status send failed', err);
       }
     });
+  }
+
+  // MARK: - Slideshow Remote Control
+
+  function slideshowGoTo(index) {
+    if (!slideshowActive || slideshowUrls.length === 0) return;
+    slideshowIndex = ((index % slideshowUrls.length) + slideshowUrls.length) % slideshowUrls.length;
+    console.log('[Castalot] slideshow goto', { index: slideshowIndex, url: slideshowUrls[slideshowIndex] });
+    slideshowEl.src = slideshowUrls[slideshowIndex];
+    sendSlideshowStatus();
+    updateSlideshowOverlay();
+    // Reset auto-advance timer so it doesn't fire immediately after manual nav
+    if (!slideshowPaused && slideshowTimer) {
+      clearInterval(slideshowTimer);
+      slideshowTimer = setInterval(function() {
+        slideshowIndex = (slideshowIndex + 1) % slideshowUrls.length;
+        console.log('[Castalot] slideshow next', { index: slideshowIndex, url: slideshowUrls[slideshowIndex] });
+        slideshowEl.src = slideshowUrls[slideshowIndex];
+        sendSlideshowStatus();
+        updateSlideshowOverlay();
+      }, slideshowIntervalMs);
+    }
+  }
+
+  function toggleSlideshowPause() {
+    if (!slideshowActive) return;
+    slideshowPaused = !slideshowPaused;
+    console.log('[Castalot] slideshow ' + (slideshowPaused ? 'paused' : 'resumed'));
+    if (slideshowPaused) {
+      if (slideshowTimer) {
+        clearInterval(slideshowTimer);
+        slideshowTimer = null;
+      }
+      if (slideshowPauseBadgeEl) slideshowPauseBadgeEl.classList.remove('hidden');
+    } else {
+      if (slideshowPauseBadgeEl) slideshowPauseBadgeEl.classList.add('hidden');
+      // Restart auto-advance timer
+      slideshowTimer = setInterval(function() {
+        slideshowIndex = (slideshowIndex + 1) % slideshowUrls.length;
+        console.log('[Castalot] slideshow next', { index: slideshowIndex, url: slideshowUrls[slideshowIndex] });
+        slideshowEl.src = slideshowUrls[slideshowIndex];
+        sendSlideshowStatus();
+        updateSlideshowOverlay();
+      }, slideshowIntervalMs);
+    }
+    showSlideshowOverlay();
+  }
+
+  function updateSlideshowOverlay() {
+    if (slideshowCounterEl && slideshowActive) {
+      slideshowCounterEl.textContent = (slideshowIndex + 1) + ' / ' + slideshowUrls.length;
+    }
+  }
+
+  function showSlideshowOverlay() {
+    if (!slideshowOverlayEl || !slideshowActive) return;
+    slideshowOverlayEl.classList.remove('hidden');
+    updateSlideshowOverlay();
+    if (slideshowOverlayTimer) clearTimeout(slideshowOverlayTimer);
+    // Keep overlay visible while paused; auto-hide after 3s when playing
+    if (!slideshowPaused) {
+      slideshowOverlayTimer = setTimeout(function() {
+        slideshowOverlayEl.classList.add('hidden');
+        slideshowOverlayTimer = null;
+      }, 3000);
+    }
+  }
+
+  function hideSlideshowOverlay() {
+    if (!slideshowOverlayEl) return;
+    slideshowOverlayEl.classList.add('hidden');
+    if (slideshowOverlayTimer) {
+      clearTimeout(slideshowOverlayTimer);
+      slideshowOverlayTimer = null;
+    }
+  }
+
+  function onSlideshowKeyDown(e) {
+    if (!slideshowActive) return;
+    switch (e.keyCode) {
+      case 39: // Right arrow — next slide
+      case 228: // MediaTrackNext (some remotes)
+        slideshowGoTo(slideshowIndex + 1);
+        showSlideshowOverlay();
+        e.preventDefault();
+        break;
+      case 37: // Left arrow — previous slide
+      case 227: // MediaTrackPrevious (some remotes)
+        slideshowGoTo(slideshowIndex - 1);
+        showSlideshowOverlay();
+        e.preventDefault();
+        break;
+      case 13:  // Enter / D-pad center
+      case 179: // MediaPlayPause
+        toggleSlideshowPause();
+        e.preventDefault();
+        break;
+      case 415: // MediaPlay
+        if (slideshowPaused) toggleSlideshowPause();
+        showSlideshowOverlay();
+        e.preventDefault();
+        break;
+      case 19:  // MediaPause
+        if (!slideshowPaused) toggleSlideshowPause();
+        e.preventDefault();
+        break;
+      default:
+        // Any other key: briefly show overlay
+        showSlideshowOverlay();
+        break;
+    }
   }
 
   context.addCustomMessageListener(slideshowNamespace, (event) => {
