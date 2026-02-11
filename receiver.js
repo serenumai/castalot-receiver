@@ -34,6 +34,7 @@
   const hlsBufferingEl = document.getElementById('hlsBuffering');
   const modeBadgeEl = document.getElementById('modeBadge');
   let modeBadgeTimer = null;
+  const splashTitleEl = document.querySelector('.splash-title');
 
   // Intended position tracking: where the user *wants* to be, independent of Shaka's clamped currentTime.
   // This prevents the tug-of-war where broadcastStatus reports Shaka's clamped position,
@@ -595,6 +596,11 @@
       var modeLabel = customData && customData.castingMode;
       if (modeLabel) {
         showModeBadge(modeLabel);
+      }
+
+      // Show splash title only in non-Direct modes
+      if (splashTitleEl) {
+        splashTitleEl.style.display = (customData && customData.hlsMode) ? '' : 'none';
       }
 
       // HLS mode: use Shaka Player for playback, CAF for media session
