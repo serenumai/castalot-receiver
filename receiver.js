@@ -288,7 +288,7 @@
     if (hlsPlayPauseEl) {
       hlsPlayPauseEl.innerHTML = paused
         ? '&#9654;'
-        : '<span style="font-size:20px;letter-spacing:-3px">&#9646;&#9646;</span>';
+        : '<span style="font-size:17px;letter-spacing:-3px">&#9646;&#9646;</span>';
     }
     if (hlsCurrentTimeEl) {
       hlsCurrentTimeEl.textContent = formatTime(pos);
