@@ -863,7 +863,18 @@
         shakaPlayer.load(hlsCurrentUrl).then(function() {
           hlsTitle = savedTitle;
           hlsTotalDuration = savedDuration;
-          console.log('[Castalot] Manifest reloaded, seeking to ' + retryTarget.toFixed(1));
+          // Verify the target is actually reachable in the refreshed manifest.
+          // If the transcoder hasn't caught up yet, the seekable range won't
+          // include the target — seeking would clamp to seekableEnd, losing
+          // the user's intended position. Let the sender restart handle it.
+          var newEnd = getSeekableEnd();
+          if (newEnd !== null && retryTarget > newEnd + 1) {
+            console.log('[Castalot] Manifest reloaded but target ' + retryTarget.toFixed(1) + ' still beyond range (end=' + newEnd.toFixed(1) + '), waiting for sender restart');
+            shakaVideoEl.play();
+            updateHlsControlsUI();
+            return;
+          }
+          console.log('[Castalot] Manifest reloaded, seeking to ' + retryTarget.toFixed(1) + ' (seekableEnd=' + (newEnd !== null ? newEnd.toFixed(1) : 'null') + ')');
           shakaVideoEl.currentTime = retryTarget;
           shakaVideoEl.play();
           clearHlsIntendedPosition();
