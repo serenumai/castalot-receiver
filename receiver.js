@@ -172,7 +172,7 @@
     hlsStatusInterval = setInterval(function() {
       if (hlsModeActive) {
         // Check if intended position can be resolved
-        if (hlsIntendedPosition !== null && shakaVideoEl) {
+        if (hlsIntendedPosition !== null && shakaVideoEl && !hlsSeekAccelTimer) {
           if (Math.abs(shakaVideoEl.currentTime - hlsIntendedPosition) < 3) {
             // Shaka already at (or near) the intended position
             console.log('[Castalot] Shaka caught up to intended position ' + hlsIntendedPosition.toFixed(1) + ', clearing');
@@ -195,7 +195,8 @@
         try { playerManager.broadcastStatus(true); } catch(e) { /* ignore */ }
         updateHlsControlsUI();
         // Auto-hide buffering when Shaka is actually playing and no intended position pending
-        if (hlsIntendedPosition === null && shakaVideoEl && !shakaVideoEl.paused && shakaVideoEl.currentTime > 0) {
+        if (hlsIntendedPosition === null && shakaVideoEl && !shakaVideoEl.paused
+            && shakaVideoEl.readyState >= 2 && shakaVideoEl.currentTime > 0) {
           hideHlsBuffering();
         }
       }
@@ -280,7 +281,9 @@
     }
 
     if (hlsPlayPauseEl) {
-      hlsPlayPauseEl.innerHTML = paused ? '&#9654;' : '&#9646;&#9646;';
+      hlsPlayPauseEl.innerHTML = paused
+        ? '&#9654;'
+        : '<span style="font-size:20px;letter-spacing:-3px">&#9646;&#9646;</span>';
     }
     if (hlsCurrentTimeEl) {
       hlsCurrentTimeEl.textContent = formatTime(pos);
@@ -742,7 +745,8 @@
           shakaVideoEl.currentTime = retryTarget;
           shakaVideoEl.play();
           clearHlsIntendedPosition();
-          hideHlsBuffering();
+          // Don't hideHlsBuffering() here — let the status interval hide it
+          // once video.readyState >= HAVE_CURRENT_DATA, avoiding black flash
           updateHlsControlsUI();
         }).catch(function(err) {
           console.error('[Castalot] Manifest reload failed:', err);

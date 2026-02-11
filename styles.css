@@ -214,6 +214,7 @@ cast-media-player {
   position: absolute;
   inset: 0;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   z-index: 18;
@@ -224,6 +225,20 @@ cast-media-player {
 
 .hls-buffering.hidden {
   opacity: 0;
+}
+
+.hls-buffering-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid rgba(255,255,255,0.2);
+  border-top-color: rgba(255,255,255,0.8);
+  border-radius: 50%;
+  animation: hls-spin 0.8s linear infinite;
+  margin-bottom: 16px;
+}
+
+@keyframes hls-spin {
+  to { transform: rotate(360deg); }
 }
 
 .hls-buffering-text {
