@@ -159,12 +159,25 @@
     stopHlsStatusBroadcast();
     hlsStatusInterval = setInterval(function() {
       if (hlsModeActive) {
-        // Check if Shaka has caught up to the intended position (content was available)
+        // Check if intended position can be resolved
         if (hlsIntendedPosition !== null && shakaVideoEl) {
           if (Math.abs(shakaVideoEl.currentTime - hlsIntendedPosition) < 3) {
+            // Shaka already at (or near) the intended position
             console.log('[Castalot] Shaka caught up to intended position ' + hlsIntendedPosition.toFixed(1) + ', clearing');
             clearHlsIntendedPosition();
             hideHlsBuffering();
+          } else {
+            // Check if Shaka's seekable range has grown to include the target.
+            // The server may have the content (transcoder runs ahead), but Shaka
+            // didn't know about it when we first tried to seek. After a manifest
+            // refresh, seekRange expands — now we can actually perform the seek.
+            var end = getSeekableEnd();
+            if (end !== null && hlsIntendedPosition <= end + 1) {
+              console.log('[Castalot] Seekable range now includes intended position ' + hlsIntendedPosition.toFixed(1) + ' (seekableEnd=' + end.toFixed(1) + '), seeking now');
+              shakaVideoEl.currentTime = hlsIntendedPosition;
+              clearHlsIntendedPosition();
+              hideHlsBuffering();
+            }
           }
         }
         try { playerManager.broadcastStatus(true); } catch(e) { /* ignore */ }
