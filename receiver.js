@@ -839,7 +839,8 @@
     hlsIntendedPosition = target;
     showHlsBuffering();
 
-    // Safety timeout: clear intended position after 30s to prevent permanent stuck state
+    // Safety timeout: clear intended position after 45s to prevent permanent stuck state
+    // (extended from 30s to avoid race with sender's seek-ahead detection during slow restarts)
     if (hlsIntendedPositionTimeout) {
       clearTimeout(hlsIntendedPositionTimeout);
     }
@@ -849,7 +850,7 @@
         clearHlsIntendedPosition();
         hideHlsBuffering();
       }
-    }, 30000);
+    }, 45000);
 
     // Target is before current transcode range — need sender restart
     if (shakaTarget < 0) {
