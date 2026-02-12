@@ -121,8 +121,8 @@
       console.log('[Castalot] Shaka HLS loaded:', hlsUrl);
       shakaVideoEl.play();
       hideSplash();
-      hideHlsBuffering();
-      // Broadcast status periodically so sender sees correct position/duration
+      // Don't hideHlsBuffering() here — video.readyState may be 0 (no decoded frame yet).
+      // The status interval will hide it once readyState >= 2 (HAVE_CURRENT_DATA).
       startHlsStatusBroadcast();
       // Show controls briefly so user knows they exist
       showHlsControls();
