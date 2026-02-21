@@ -576,9 +576,7 @@
         clearInterval(slideshowTimer);
         slideshowTimer = null;
       }
-      if (slideshowPauseBadgeEl) slideshowPauseBadgeEl.classList.remove('hidden');
     } else {
-      if (slideshowPauseBadgeEl) slideshowPauseBadgeEl.classList.add('hidden');
       // Restart auto-advance timer
       slideshowTimer = setInterval(function() {
         slideshowIndex = (slideshowIndex + 1) % slideshowUrls.length;
