@@ -658,8 +658,23 @@
 
   context.addCustomMessageListener(slideshowNamespace, (event) => {
     const data = event && event.data;
-    if (!data || data.type !== 'slideshowStatusRequest') return;
-    sendSlideshowStatus();
+    if (!data) return;
+    if (data.type === 'slideshowStatusRequest') {
+      sendSlideshowStatus();
+    } else if (data.type === 'slideshowPause') {
+      if (!slideshowPaused) toggleSlideshowPause();
+      showSlideshowOverlay();
+      sendSlideshowStatus();
+    } else if (data.type === 'slideshowResume') {
+      if (slideshowPaused) toggleSlideshowPause();
+      showSlideshowOverlay();
+      sendSlideshowStatus();
+    } else if (data.type === 'slideshowGoTo') {
+      var idx = typeof data.index === 'number' ? data.index : 0;
+      slideshowGoTo(idx);
+      showSlideshowOverlay();
+      sendSlideshowStatus();
+    }
   });
 
   // Register HLS namespace so receiver can send seek requests to sender
